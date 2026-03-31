@@ -1,25 +1,20 @@
 """
 AASIST PyTorch → ONNX 변환 스크립트
 
-기존 deep-fake-audio-detection 프로젝트의 AASIST 모델을
-ONNX 형식으로 변환하여 Android (ONNX Runtime Mobile)에서 실행 가능하게 한다.
+AASIST 모델을 ONNX 형식으로 변환하여 Android (ONNX Runtime Mobile)에서 실행 가능하게 한다.
 
 Usage:
+    cd model-training
     python convert_to_onnx.py --model-path <pth_path> --output <onnx_path> [--verify]
 """
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
-
-# 기존 AASIST 모델 코드 경로 추가
-AASIST_CODE_DIR = Path(__file__).resolve().parent.parent.parent / "deep-fake-audio-detection" / "code" / "2_aasist_rawboost"
-sys.path.insert(0, str(AASIST_CODE_DIR))
 
 from models.AASIST import Model
 
@@ -206,7 +201,7 @@ def load_aasist_model(model_path: str, config_path: str = None) -> Model:
         with open(config_path, "r") as f:
             model_config = json.load(f)["model_config"]
     else:
-        config_path = str(AASIST_CODE_DIR / "config" / "AASIST.conf")
+        config_path = str(Path(__file__).parent / "configs" / "aasist.json")
         with open(config_path, "r") as f:
             model_config = json.load(f)["model_config"]
 

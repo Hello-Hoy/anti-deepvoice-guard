@@ -20,12 +20,10 @@ _detector: AASISTDetector | None = None
 
 # 기본 모델 경로
 DEFAULT_MODEL_PATH = str(
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "deep-fake-audio-detection"
-    / "code"
-    / "2_aasist_rawboost"
-    / "models"
+    Path(__file__).resolve().parent.parent.parent
+    / "model-training"
     / "weights"
+    / "official"
     / "AASIST.pth"
 )
 

@@ -1,7 +1,6 @@
 """AASIST 모델 추론 래퍼.
 
-기존 deep-fake-audio-detection 프로젝트의 AASIST 모델을 로드하고
-오디오 세그먼트에 대한 deepfake 탐지 추론을 수행한다.
+AASIST 모델을 로드하고 오디오 세그먼트에 대한 deepfake 탐지 추론을 수행한다.
 """
 
 import json
@@ -13,14 +12,17 @@ from time import perf_counter
 import numpy as np
 import torch
 
-# 기존 AASIST 모델 코드 경로
-AASIST_CODE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "deep-fake-audio-detection" / "code" / "2_aasist_rawboost"
-sys.path.insert(0, str(AASIST_CODE_DIR))
+# 프로젝트 내 model-training/models/ 참조
+_MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "model-training"
+sys.path.insert(0, str(_MODELS_DIR))
 
 from models.AASIST import Model
 
 SAMPLE_RATE = 16000
 NB_SAMP = 80000  # 5초 @ 16kHz
+
+# 기본 config 경로
+DEFAULT_CONFIG_PATH = str(_MODELS_DIR / "configs" / "aasist.json")
 
 
 @dataclass
@@ -50,7 +52,7 @@ class AASISTDetector:
         self.model_version = "aasist-v1"
 
         if config_path is None:
-            config_path = str(AASIST_CODE_DIR / "config" / "AASIST.conf")
+            config_path = DEFAULT_CONFIG_PATH
 
         with open(config_path, "r") as f:
             config = json.load(f)

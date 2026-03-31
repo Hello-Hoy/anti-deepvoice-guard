@@ -1,4 +1,13 @@
 .venv/
 *.onnx
+*.pth
 __pycache__/
 *.pdf
+.DS_Store
+model_server
+
+# Training data (too large for git)
+model-training/data/real/
+model-training/data/fake/
+model-training/weights/official/*.pth
+model-training/weights/finetuned/*.pth
