@@ -67,40 +67,56 @@ class EncryptedStorage(private val context: Context) {
      */
     fun loadSegment(filePath: String): FloatArray? {
         val file = File(filePath)
-        if (!file.exists()) return null
+        if (!file.exists() || !isUnderStorageDir(file)) return null
 
-        val encryptedFile = EncryptedFile.Builder(
-            context,
-            file,
-            masterKey,
-            EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
-        ).build()
+        return try {
+            val encryptedFile = EncryptedFile.Builder(
+                context,
+                file,
+                masterKey,
+                EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
+            ).build()
 
-        return encryptedFile.openFileInput().use { input ->
-            val bytes = input.readBytes()
-            if (bytes.size < 4) return@use null
+            encryptedFile.openFileInput().use { input ->
+                val bytes = input.readBytes()
+                if (bytes.size < 4) return@use null
 
-            val sampleCount = (bytes[0].toInt() and 0xFF shl 24) or
-                    (bytes[1].toInt() and 0xFF shl 16) or
-                    (bytes[2].toInt() and 0xFF shl 8) or
-                    (bytes[3].toInt() and 0xFF)
+                val sampleCount = (bytes[0].toInt() and 0xFF shl 24) or
+                        (bytes[1].toInt() and 0xFF shl 16) or
+                        (bytes[2].toInt() and 0xFF shl 8) or
+                        (bytes[3].toInt() and 0xFF)
 
-            val audio = FloatArray(sampleCount)
-            for (i in 0 until sampleCount) {
-                val offset = 4 + i * 2
-                if (offset + 1 >= bytes.size) break
-                val lo = bytes[offset].toInt() and 0xFF
-                val hi = bytes[offset + 1].toInt() and 0xFF
-                val shortVal = (hi shl 8 or lo).toShort()
-                audio[i] = shortVal / 32768f
+                // sampleCount 검증: 음수 또는 비정상적으로 큰 값 방어
+                val maxSamples = 16000 * 30  // 최대 30초
+                if (sampleCount <= 0 || sampleCount > maxSamples) return@use null
+
+                val expectedBytes = 4 + sampleCount * 2
+                if (bytes.size < expectedBytes) return@use null
+
+                val audio = FloatArray(sampleCount)
+                for (i in 0 until sampleCount) {
+                    val offset = 4 + i * 2
+                    val lo = bytes[offset].toInt() and 0xFF
+                    val hi = bytes[offset + 1].toInt() and 0xFF
+                    val shortVal = (hi shl 8 or lo).toShort()
+                    audio[i] = shortVal / 32768f
+                }
+                audio
             }
-            audio
+        } catch (_: Exception) {
+            null  // 복호화/키스토어 실패 시 fail-closed
         }
     }
 
-    /** 특정 파일 삭제. */
+    /** 특정 파일 삭제 (storageDir 하위만 허용). */
     fun deleteSegment(filePath: String): Boolean {
-        return File(filePath).delete()
+        val file = File(filePath)
+        if (!isUnderStorageDir(file)) return false
+        return file.delete()
+    }
+
+    private fun isUnderStorageDir(file: File): Boolean {
+        return file.canonicalPath.startsWith(storageDir.canonicalPath)
     }
 
     /** 저장된 파일 총 크기 (bytes). */

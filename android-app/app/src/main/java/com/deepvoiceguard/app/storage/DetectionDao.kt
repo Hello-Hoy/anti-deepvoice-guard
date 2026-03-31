@@ -23,8 +23,14 @@ interface DetectionDao {
     @Query("SELECT COUNT(*) FROM detections WHERE timestamp >= :sinceMs")
     suspend fun countSince(sinceMs: Long): Int
 
+    @Query("SELECT * FROM detections WHERE timestamp < :beforeMs")
+    suspend fun getOlderThan(beforeMs: Long): List<DetectionEntity>
+
     @Query("DELETE FROM detections WHERE timestamp < :beforeMs")
     suspend fun deleteOlderThan(beforeMs: Long): Int
+
+    @Query("SELECT * FROM detections ORDER BY timestamp ASC LIMIT 1")
+    suspend fun getOldest(): DetectionEntity?
 
     @Query("DELETE FROM detections WHERE id = :id")
     suspend fun deleteById(id: Long)
