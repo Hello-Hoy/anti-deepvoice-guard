@@ -4,6 +4,7 @@ import android.content.Context
 import com.deepvoiceguard.app.storage.DetectionDao
 import com.deepvoiceguard.app.storage.DetectionDatabase
 import com.deepvoiceguard.app.storage.EncryptedStorage
+import com.deepvoiceguard.app.storage.SettingsRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -28,4 +29,9 @@ object AppModule {
     @Singleton
     fun provideEncryptedStorage(@ApplicationContext context: Context): EncryptedStorage =
         EncryptedStorage(context)
+
+    @Provides
+    @Singleton
+    fun provideSettingsRepository(@ApplicationContext context: Context): SettingsRepository =
+        SettingsRepository(context)
 }

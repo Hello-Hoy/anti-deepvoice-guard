@@ -1,10 +1,15 @@
 package com.deepvoiceguard.app.ui.screens
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.IBinder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,28 +40,50 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.deepvoiceguard.app.inference.ThreatLevel
 import com.deepvoiceguard.app.service.AudioCaptureService
-import com.deepvoiceguard.app.service.AudioPipeline
 
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
-    var isMonitoring by remember { mutableStateOf(false) }
-    var pipeline by remember { mutableStateOf<AudioPipeline?>(null) }
+    var service by remember { mutableStateOf<AudioCaptureService?>(null) }
 
-    val latestResult by pipeline?.latestResult?.collectAsState() ?: remember { mutableStateOf(null) }
-    val vadProb by pipeline?.vadProbability?.collectAsState() ?: remember { mutableStateOf(0f) }
+    // 서비스의 live StateFlow를 구독
+    val isMonitoring by service?.isMonitoring?.collectAsState() ?: remember { mutableStateOf(false) }
+    val latestResult by service?.latestResult?.collectAsState() ?: remember { mutableStateOf(null) }
+    val vadProb by service?.vadProbability?.collectAsState() ?: remember { mutableStateOf(0f) }
+    val stats by service?.stats?.collectAsState() ?: remember { mutableStateOf(null) }
+    var permissionDenied by remember { mutableStateOf(false) }
+
+    // 모니터링 시작 helper
+    fun startMonitoring() {
+        val intent = Intent(context, AudioCaptureService::class.java).apply {
+            action = AudioCaptureService.ACTION_START
+        }
+        context.startForegroundService(intent)
+    }
+
+    // 런타임 권한 요청 launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        if (permissions[Manifest.permission.RECORD_AUDIO] == true) {
+            permissionDenied = false
+            startMonitoring()
+        } else {
+            permissionDenied = true
+        }
+    }
 
     // Service 연결
     val connection = remember {
         object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-                val binder = service as? AudioCaptureService.LocalBinder
-                pipeline = binder?.pipeline
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                service = (binder as? AudioCaptureService.LocalBinder)?.service
             }
             override fun onServiceDisconnected(name: ComponentName?) {
-                pipeline = null
+                service = null
             }
         }
     }
@@ -89,18 +116,43 @@ fun HomeScreen() {
 
         Spacer(modifier = Modifier.height(32.dp))
 
+        // 권한 거부 안내
+        if (permissionDenied) {
+            Text(
+                "마이크 권한이 필요합니다. 설정에서 권한을 허용해주세요.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         // Start/Stop 버튼
         Button(
             onClick = {
-                val intent = Intent(context, AudioCaptureService::class.java)
                 if (!isMonitoring) {
-                    intent.action = AudioCaptureService.ACTION_START
-                    context.startForegroundService(intent)
+                    // 런타임 권한 확인
+                    val hasRecordAudio = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.RECORD_AUDIO,
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                    if (hasRecordAudio) {
+                        permissionDenied = false
+                        startMonitoring()
+                    } else {
+                        val permissions = buildList {
+                            add(Manifest.permission.RECORD_AUDIO)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                add(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        }
+                        permissionLauncher.launch(permissions.toTypedArray())
+                    }
                 } else {
-                    intent.action = AudioCaptureService.ACTION_STOP
+                    val intent = Intent(context, AudioCaptureService::class.java).apply {
+                        action = AudioCaptureService.ACTION_STOP
+                    }
                     context.startService(intent)
                 }
-                isMonitoring = !isMonitoring
             },
             modifier = Modifier.size(120.dp),
             shape = CircleShape,
@@ -178,7 +230,6 @@ fun HomeScreen() {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Today's Stats", style = MaterialTheme.typography.titleSmall)
                 Spacer(modifier = Modifier.height(8.dp))
-                val stats = pipeline?.getStats()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

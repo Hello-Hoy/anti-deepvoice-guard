@@ -1,3 +1,4 @@
 .venv/
 *.onnx
 __pycache__/
+*.pdf

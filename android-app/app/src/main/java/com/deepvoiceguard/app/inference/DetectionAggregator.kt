@@ -19,7 +19,12 @@ data class AggregatedResult(
 /**
  * 최근 N개 탐지 결과를 슬라이딩 윈도우로 집계하여 위험 수준을 판정한다.
  */
-class DetectionAggregator(private val windowSize: Int = 5) {
+class DetectionAggregator(
+    private val windowSize: Int = 5,
+    private val dangerThreshold: Float = 0.9f,
+    private val warningThreshold: Float = 0.7f,
+    private val cautionThreshold: Float = 0.6f,
+) {
 
     private val results = ArrayDeque<DetectionResult>(windowSize)
 
@@ -31,12 +36,12 @@ class DetectionAggregator(private val windowSize: Int = 5) {
         results.addLast(result)
 
         val avgFake = results.map { it.fakeScore }.average().toFloat()
-        val consecutiveHigh = countConsecutiveHigh(threshold = 0.7f)
+        val consecutiveHigh = countConsecutiveHigh(threshold = warningThreshold)
 
         val threatLevel = when {
-            result.fakeScore > 0.9f -> ThreatLevel.DANGER
+            result.fakeScore > dangerThreshold -> ThreatLevel.DANGER
             consecutiveHigh >= 3 -> ThreatLevel.WARNING
-            avgFake > 0.6f -> ThreatLevel.CAUTION
+            avgFake > cautionThreshold -> ThreatLevel.CAUTION
             else -> ThreatLevel.SAFE
         }
 

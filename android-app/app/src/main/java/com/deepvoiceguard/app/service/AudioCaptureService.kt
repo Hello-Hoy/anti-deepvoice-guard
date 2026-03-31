@@ -14,20 +14,38 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.deepvoiceguard.app.R
 import com.deepvoiceguard.app.audio.VadEngine
+import com.deepvoiceguard.app.inference.AggregatedResult
 import com.deepvoiceguard.app.inference.InferenceEngine
 import com.deepvoiceguard.app.inference.OnDeviceEngine
+import com.deepvoiceguard.app.inference.ServerEngine
+import com.deepvoiceguard.app.storage.AppSettings
+import com.deepvoiceguard.app.storage.DetectionDao
+import com.deepvoiceguard.app.storage.DetectionEntity
+import com.deepvoiceguard.app.storage.EncryptedStorage
+import com.deepvoiceguard.app.storage.SettingsRepository
 import com.deepvoiceguard.app.ui.MainActivity
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 /**
  * Foreground Service로 마이크 오디오를 캡처하고 AudioPipeline에 공급한다.
  */
+@AndroidEntryPoint
 class AudioCaptureService : Service() {
+
+    @Inject lateinit var detectionDao: DetectionDao
+    @Inject lateinit var encryptedStorage: EncryptedStorage
+    @Inject lateinit var settingsRepository: SettingsRepository
+    private lateinit var notificationHelper: NotificationHelper
 
     companion object {
         const val CHANNEL_ID = "deepvoice_guard_channel"
@@ -38,8 +56,21 @@ class AudioCaptureService : Service() {
         const val ACTION_STOP = "com.deepvoiceguard.ACTION_STOP"
     }
 
+    // 서비스 상태를 live observable로 노출
+    private val _isMonitoring = MutableStateFlow(false)
+    val isMonitoring: StateFlow<Boolean> = _isMonitoring
+
+    private val _latestResult = MutableStateFlow<AggregatedResult?>(null)
+    val latestResult: StateFlow<AggregatedResult?> = _latestResult
+
+    private val _vadProbability = MutableStateFlow(0f)
+    val vadProbability: StateFlow<Float> = _vadProbability
+
+    private val _stats = MutableStateFlow(PipelineStats(0, 0))
+    val stats: StateFlow<PipelineStats> = _stats
+
     inner class LocalBinder : Binder() {
-        val pipeline: AudioPipeline? get() = this@AudioCaptureService.pipeline
+        val service: AudioCaptureService get() = this@AudioCaptureService
     }
 
     private val binder = LocalBinder()
@@ -54,11 +85,12 @@ class AudioCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        notificationHelper = NotificationHelper(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startCapture()
+            ACTION_START -> serviceScope.launch { startCapture() }
             ACTION_STOP -> stopCapture()
         }
         return START_STICKY
@@ -66,15 +98,64 @@ class AudioCaptureService : Service() {
 
     override fun onBind(intent: Intent): IBinder = binder
 
-    private fun startCapture() {
+    private suspend fun startCapture() {
         if (isRecording) return
 
         startForeground(NOTIFICATION_ID, createNotification("Monitoring..."))
 
-        // 엔진 초기화
+        // 설정값 로드
+        val settings: AppSettings = settingsRepository.settings.first()
+
+        // 설정에 따른 엔진 초기화
         vadEngine = VadEngine(this)
-        inferenceEngine = OnDeviceEngine(this)
-        pipeline = AudioPipeline(vadEngine!!, inferenceEngine!!, serviceScope)
+        val onDeviceEngine = OnDeviceEngine(this)
+        inferenceEngine = if (settings.useOnDevice) {
+            onDeviceEngine
+        } else {
+            ServerEngine(settings.serverUrl, fallback = onDeviceEngine)
+        }
+        val newPipeline = AudioPipeline(
+            vadEngine!!, inferenceEngine!!, serviceScope, dangerThreshold = settings.threshold,
+        )
+        pipeline = newPipeline
+
+        // 파이프라인 상태를 서비스 레벨 StateFlow로 포워딩
+        serviceScope.launch {
+            newPipeline.latestResult.collect { result ->
+                _latestResult.value = result
+                _stats.value = newPipeline.getStats()
+            }
+        }
+        serviceScope.launch {
+            newPipeline.vadProbability.collect { prob ->
+                _vadProbability.value = prob
+            }
+        }
+
+        // 감지 이벤트 → DB 저장 + 암호화 오디오 저장 + 알림
+        serviceScope.launch(Dispatchers.IO) {
+            newPipeline.detectionEvents.collect { aggregated ->
+                val audioSegment = newPipeline.ringBuffer.getLast(80_000)
+                val audioFilePath = if (audioSegment.isNotEmpty()) {
+                    try { encryptedStorage.saveSegment(audioSegment) } catch (_: Exception) { null }
+                } else null
+
+                val entity = DetectionEntity(
+                    timestamp = System.currentTimeMillis(),
+                    fakeScore = aggregated.averageFakeScore,
+                    realScore = 1f - aggregated.averageFakeScore,
+                    confidence = aggregated.latestResult.confidence,
+                    durationMs = aggregated.latestResult.latencyMs,
+                    audioFilePath = audioFilePath,
+                    inferenceMode = inferenceEngine?.getModelInfo()?.type ?: "on_device",
+                    threatLevel = aggregated.threatLevel.name,
+                    latencyMs = aggregated.latestResult.latencyMs,
+                )
+                try { detectionDao.insert(entity) } catch (_: Exception) { }
+
+                notificationHelper.showDetectionAlert(aggregated)
+            }
+        }
 
         // AudioRecord 설정
         val bufferSize = AudioRecord.getMinBufferSize(
@@ -91,7 +172,14 @@ class AudioCaptureService : Service() {
             bufferSize,
         )
 
+        // AudioRecord 초기화 검증
+        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+            stopCapture()
+            return
+        }
+
         isRecording = true
+        _isMonitoring.value = true
         audioRecord?.startRecording()
 
         // 오디오 읽기 루프
@@ -108,12 +196,15 @@ class AudioCaptureService : Service() {
 
     private fun stopCapture() {
         isRecording = false
+        _isMonitoring.value = false
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
         vadEngine?.close()
         inferenceEngine?.close()
         pipeline = null
+        _latestResult.value = null
+        _vadProbability.value = 0f
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

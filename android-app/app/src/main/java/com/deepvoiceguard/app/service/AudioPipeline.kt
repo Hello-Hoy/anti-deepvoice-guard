@@ -27,10 +27,15 @@ class AudioPipeline(
     private val vadEngine: VadEngine,
     private val inferenceEngine: InferenceEngine,
     private val scope: CoroutineScope,
+    dangerThreshold: Float = 0.9f,
 ) {
     val ringBuffer = RingBuffer()
     private val segmentExtractor = SegmentExtractor(ringBuffer)
-    private val aggregator = DetectionAggregator()
+    private val aggregator = DetectionAggregator(
+        dangerThreshold = dangerThreshold,
+        warningThreshold = (dangerThreshold - 0.2f).coerceAtLeast(0.5f),
+        cautionThreshold = (dangerThreshold - 0.3f).coerceAtLeast(0.4f),
+    )
 
     private val _latestResult = MutableStateFlow<AggregatedResult?>(null)
     val latestResult: StateFlow<AggregatedResult?> = _latestResult
