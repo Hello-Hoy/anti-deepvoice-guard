@@ -1,6 +1,5 @@
 package com.deepvoiceguard.app.ui.screens
 
-import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -39,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import com.deepvoiceguard.app.inference.ThreatLevel
 import com.deepvoiceguard.app.service.AudioCaptureService
 import com.deepvoiceguard.app.service.AudioPipeline
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @Composable
 fun HomeScreen() {

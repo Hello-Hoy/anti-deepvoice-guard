@@ -213,10 +213,17 @@ def load_aasist_model(model_path: str, config_path: str = None) -> Model:
     model = Model(model_config)
 
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-    if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
-    else:
-        model.load_state_dict(checkpoint, strict=False)
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+
+    # strict=False를 사용하되, 누락/불일치 키를 경고로 출력
+    result = model.load_state_dict(state_dict, strict=False)
+    if result.missing_keys:
+        # domain_classifier 키는 추론에서 사용하지 않으므로 무시
+        non_domain = [k for k in result.missing_keys if "domain" not in k]
+        if non_domain:
+            print(f"  WARNING: Missing keys (non-domain): {non_domain}")
+    if result.unexpected_keys:
+        print(f"  WARNING: Unexpected keys: {result.unexpected_keys}")
 
     model.eval()
     return model

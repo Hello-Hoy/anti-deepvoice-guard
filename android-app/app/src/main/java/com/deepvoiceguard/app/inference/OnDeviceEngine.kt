@@ -76,6 +76,7 @@ class OnDeviceEngine(
     }
 
     private fun padOrCrop(audio: FloatArray, targetLen: Int): FloatArray {
+        if (audio.isEmpty()) return FloatArray(targetLen)
         if (audio.size >= targetLen) {
             return audio.copyOfRange(0, targetLen)
         }

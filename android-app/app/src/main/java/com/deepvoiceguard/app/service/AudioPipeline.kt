@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 오디오 파이프라인: RingBuffer → VAD → SegmentExtractor → InferenceEngine → Aggregator.
@@ -39,8 +41,12 @@ class AudioPipeline(
     private val _vadProbability = MutableStateFlow(0f)
     val vadProbability: StateFlow<Float> = _vadProbability
 
+    private val inferenceMutex = Mutex()
     private var segmentsAnalyzed = 0L
     private var detectionsCount = 0
+
+    // VAD에 512 단위로 공급 시 남는 tail samples 버퍼
+    private var vadRemainder = FloatArray(0)
 
     init {
         vadEngine.listener = object : VadEngine.Listener {
@@ -67,17 +73,31 @@ class AudioPipeline(
         // RingBuffer에 쓰기
         ringBuffer.write(floats)
 
+        // 이전 remainder와 합치기
+        val combined = if (vadRemainder.isNotEmpty()) {
+            vadRemainder + floats
+        } else {
+            floats
+        }
+
         // VAD에 512 samples 단위로 공급
         var offset = 0
-        while (offset + 512 <= readSize) {
-            val frame = floats.copyOfRange(offset, offset + 512)
+        while (offset + 512 <= combined.size) {
+            val frame = combined.copyOfRange(offset, offset + 512)
             val prob = vadEngine.process(frame)
             _vadProbability.value = prob
             offset += 512
         }
+
+        // 남은 tail samples 저장
+        vadRemainder = if (offset < combined.size) {
+            combined.copyOfRange(offset, combined.size)
+        } else {
+            FloatArray(0)
+        }
     }
 
-    private suspend fun analyzeSegments(durationMs: Long) {
+    private suspend fun analyzeSegments(durationMs: Long) = inferenceMutex.withLock {
         val segments = segmentExtractor.extract(durationMs)
         for (segment in segments) {
             val result: DetectionResult = inferenceEngine.detect(segment)

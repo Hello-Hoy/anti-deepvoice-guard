@@ -51,6 +51,7 @@ class SegmentExtractor(
     }
 
     private fun padOrCrop(audio: FloatArray): FloatArray {
+        if (audio.isEmpty()) return FloatArray(MODEL_INPUT_SAMPLES)
         if (audio.size >= MODEL_INPUT_SAMPLES) {
             return audio.copyOfRange(0, MODEL_INPUT_SAMPLES)
         }
