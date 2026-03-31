@@ -75,6 +75,17 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 | 모델 크기 | AASIST-L: 644KB, Silero VAD: 2.3MB |
 | 메모리 사용 | ~12MB (추론 시) |
 
+## Recent Changes (Phase 6 — Runtime Fix)
+
+Codex adversarial review로 발견된 4개 핵심 블로커 수정:
+
+| Issue | Fix |
+|-------|-----|
+| HomeScreen이 null 파이프라인 스냅샷 | 서비스 StateFlow를 live observable로 노출, UI가 실시간 구독 |
+| 런타임 RECORD_AUDIO 권한 체크 없음 | START 전 권한 요청 게이팅 + AudioRecord 초기화 검증 |
+| 감지 결과 메모리 전용 (DB/알림 데드코드) | detectionEvents → Room DB 저장 + 암호화 오디오 + 푸시 알림 |
+| Settings UI가 서비스에 영향 없음 | DataStore 영속화 → 엔진 선택/threshold 서비스에 주입 |
+
 ## Based On
 
 [deep-fake-audio-detection](../deep-fake-audio-detection/) — SW중심대학 경진대회 AI부문 10위 (219팀 중)
