@@ -19,7 +19,7 @@ sys.path.insert(0, str(_MODELS_DIR))
 from models.AASIST import Model
 
 SAMPLE_RATE = 16000
-NB_SAMP = 80000  # 5초 @ 16kHz
+NB_SAMP = 64600  # ~4초 @ 16kHz (AASIST 공식 입력 크기)
 
 # 기본 config 경로
 DEFAULT_CONFIG_PATH = str(_MODELS_DIR / "configs" / "aasist.json")
@@ -89,8 +89,9 @@ class AASISTDetector:
 
         elapsed_ms = (perf_counter() - start) * 1000
 
-        real_score = probs[0][0].item()
-        fake_score = probs[0][1].item()
+        # ASVspoof convention: index 0 = spoof, index 1 = bonafide
+        fake_score = probs[0][0].item()
+        real_score = probs[0][1].item()
         confidence = max(real_score, fake_score)
 
         return DetectionResult(

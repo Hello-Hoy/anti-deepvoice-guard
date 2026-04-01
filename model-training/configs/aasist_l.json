@@ -1,7 +1,7 @@
 {
     "model_config": {
         "architecture": "AASIST",
-        "nb_samp": 80000,
+        "nb_samp": 64600,
         "first_conv": 128,
         "filts": [70, [1, 32], [32, 32], [32, 24], [24, 24]],
         "gat_dims": [24, 32],

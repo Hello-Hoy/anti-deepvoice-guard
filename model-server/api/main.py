@@ -78,8 +78,8 @@ async def model_info():
     return {
         "version": _detector.model_version,
         "sample_rate": 16000,
-        "input_samples": 80000,
-        "input_duration_sec": 5.0,
+        "input_samples": 64600,
+        "input_duration_sec": 4.0375,
     }
 
 

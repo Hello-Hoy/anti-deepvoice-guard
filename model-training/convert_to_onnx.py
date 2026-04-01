@@ -71,9 +71,9 @@ class AASISTInference(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (batch, 80000) raw audio waveform, 16kHz
+            x: (batch, 64600) raw audio waveform, 16kHz (~4s)
         Returns:
-            (batch, 2) softmax probabilities [real_prob, fake_prob]
+            (batch, 2) softmax probabilities [spoof_prob, bonafide_prob]
         """
         # SincConv 대체: pre-computed 필터로 Conv1d
         x = x.unsqueeze(1)  # (batch, 1, 80000)
@@ -169,7 +169,7 @@ class AASISTInference(nn.Module):
 
 AASIST_L_CONFIG = {
     "architecture": "AASIST",
-    "nb_samp": 80000,
+    "nb_samp": 64600,
     "first_conv": 128,
     "filts": [70, [1, 32], [32, 32], [32, 24], [24, 24]],
     "gat_dims": [24, 32],
@@ -234,7 +234,7 @@ def convert_to_onnx(model_path: str, output_path: str, config_path: str = None):
     inference_model.eval()
 
     # 더미 입력 (batch=1, 80000 samples = 5초 @ 16kHz)
-    dummy_input = torch.randn(1, 80000)
+    dummy_input = torch.randn(1, 64600)
 
     print(f"Exporting to ONNX: {output_path}")
     torch.onnx.export(
@@ -264,7 +264,7 @@ def verify_onnx(model_path: str, onnx_path: str, config_path: str = None):
     inference_model = AASISTInference(original_model)
     inference_model.eval()
 
-    test_input = torch.randn(1, 80000)
+    test_input = torch.randn(1, 64600)
     with torch.no_grad():
         pytorch_output = inference_model(test_input).numpy()
 

@@ -12,11 +12,11 @@ import java.nio.FloatBuffer
  */
 class OnDeviceEngine(
     context: Context,
-    modelFileName: String = "aasist_l.onnx",
+    modelFileName: String = "aasist.onnx",
 ) : InferenceEngine {
 
     companion object {
-        private const val NB_SAMP = 80_000  // 5초 @ 16kHz
+        private const val NB_SAMP = 64_600  // ~4초 @ 16kHz (AASIST 공식 입력 크기)
     }
 
     private val env = OrtEnvironment.getEnvironment()
@@ -51,8 +51,9 @@ class OnDeviceEngine(
 
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
 
-        val realScore = probabilities[0]
-        val fakeScore = probabilities[1]
+        // ASVspoof convention: index 0 = spoof, index 1 = bonafide
+        val fakeScore = probabilities[0]
+        val realScore = probabilities[1]
 
         return DetectionResult(
             fakeScore = fakeScore,
@@ -65,7 +66,7 @@ class OnDeviceEngine(
     override fun isReady(): Boolean = ready
 
     override fun getModelInfo(): ModelInfo = ModelInfo(
-        name = "AASIST-L",
+        name = "AASIST",
         version = "1.0",
         type = "on_device",
     )

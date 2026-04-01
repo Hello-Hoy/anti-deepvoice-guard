@@ -2,18 +2,18 @@ package com.deepvoiceguard.app.audio
 
 /**
  * VAD 이벤트를 받아 RingBuffer에서 오디오 세그먼트를 추출한다.
- * AASIST 모델의 입력 크기(80,000 samples = 5초 @ 16kHz)에 맞게 패딩/분할한다.
+ * AASIST 모델의 입력 크기(64,600 samples = ~4초 @ 16kHz)에 맞게 패딩/분할한다.
  */
 class SegmentExtractor(
     private val ringBuffer: RingBuffer,
     private val sampleRate: Int = 16000,
 ) {
     companion object {
-        const val MODEL_INPUT_SAMPLES = 80_000  // 5초 @ 16kHz
+        const val MODEL_INPUT_SAMPLES = 64_600  // ~4초 @ 16kHz (AASIST 공식)
         const val MIN_DURATION_MS = 1000L       // 최소 1초
         const val MAX_DURATION_MS = 10000L      // 최대 10초
-        const val WINDOW_SAMPLES = 80_000       // 5초 윈도우
-        const val OVERLAP_SAMPLES = 40_000      // 2.5초 오버랩
+        const val WINDOW_SAMPLES = 64_600       // ~4초 윈도우
+        const val OVERLAP_SAMPLES = 32_300      // ~2초 오버랩
         const val PADDING_SAMPLES = 8_000       // 0.5초 전후 패딩
     }
 
@@ -21,7 +21,7 @@ class SegmentExtractor(
      * 음성 종료 시점에서 세그먼트를 추출한다.
      *
      * @param durationMs 음성 구간의 길이 (ms)
-     * @return 모델 입력 크기(80,000)로 맞춰진 세그먼트 리스트
+     * @return 모델 입력 크기(64,600)로 맞춰진 세그먼트 리스트
      */
     fun extract(durationMs: Long): List<FloatArray> {
         val clampedDuration = durationMs.coerceIn(MIN_DURATION_MS, MAX_DURATION_MS)

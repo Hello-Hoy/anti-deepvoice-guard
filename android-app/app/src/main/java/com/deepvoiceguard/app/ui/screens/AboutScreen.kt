@@ -26,9 +26,9 @@ fun AboutScreen() {
         )
         Spacer(modifier = Modifier.height(16.dp))
         InfoRow("App", "Anti-DeepVoice Guard v1.0.0")
-        InfoRow("Model", "AASIST-L (ONNX)")
-        InfoRow("Model Size", "~0.5 MB")
-        InfoRow("Input", "5s @ 16kHz (80,000 samples)")
+        InfoRow("Model", "AASIST (ONNX)")
+        InfoRow("Model Size", "~0.6 MB")
+        InfoRow("Input", "~4s @ 16kHz (64,600 samples)")
         InfoRow("VAD", "Silero VAD v5")
         Spacer(modifier = Modifier.height(16.dp))
         Text(
