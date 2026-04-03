@@ -1,0 +1,19 @@
+# AIHub 다운로드/추출 데이터 (99GB+)
+data/aihub_downloads/
+data/aihub_extracted/
+
+# 학습/생성 데이터 (WAV 파일들)
+data/real/
+data/fake/
+
+# CSV (절대경로 포함)
+data/train.csv
+data/val.csv
+
+# 로그
+*.log
+
+# 임시 파일
+__pycache__/
+*.pyc
+.DS_Store
