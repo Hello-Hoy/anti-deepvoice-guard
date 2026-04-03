@@ -42,7 +42,7 @@ def _phone_quality_augment(waveform: torch.Tensor) -> torch.Tensor:
     # 부드러운 롤오프
     rolloff = 50
     for i in range(min(rolloff, low_cut)):
-        mask[low_cut - i] = i / rolloff
+        mask[low_cut - rolloff + i] = i / rolloff
     for i in range(min(rolloff, n_freq - high_cut)):
         if high_cut + i < n_freq:
             mask[high_cut + i] = 1.0 - i / rolloff
@@ -96,6 +96,13 @@ class AudioDataset(Dataset):
 
         waveform = waveform.squeeze(0)  # (samples,)
 
+        # 볼륨 정규화 (조용한 TTS 대응 — 최대 10x gain)
+        peak = waveform.abs().max()
+        if peak > 0 and peak < 0.05:
+            target = 0.3
+            gain = min(target / peak, 10.0)
+            waveform = waveform * gain
+
         # Pad or crop
         if waveform.shape[0] < self.nb_samp:
             waveform = F.pad(waveform, (0, self.nb_samp - waveform.shape[0]))
@@ -105,8 +112,8 @@ class AudioDataset(Dataset):
 
         # Augmentation
         if self.augment:
-            # Random gain
-            gain = random.uniform(0.8, 1.2)
+            # Random gain (넓은 범위 — 조용한 TTS 대응)
+            gain = random.uniform(0.5, 1.5)
             waveform = waveform * gain
             # Random noise injection
             if random.random() < 0.3:
@@ -115,6 +122,8 @@ class AudioDataset(Dataset):
             # Phone quality simulation (전화 품질 열화)
             if random.random() < 0.3:
                 waveform = _phone_quality_augment(waveform)
+            # 최종 clamp (gain/noise/phone augmentation 후 범위 제한)
+            waveform = waveform.clamp(-1.0, 1.0)
 
         return waveform, item["label"]  # (nb_samp,), label
 
