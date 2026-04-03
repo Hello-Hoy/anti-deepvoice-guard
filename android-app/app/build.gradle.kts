@@ -58,8 +58,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // Hilt DI
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    ksp("com.google.dagger:hilt-compiler:2.51.1")
+    implementation("com.google.dagger:hilt-android:2.54")
+    ksp("com.google.dagger:hilt-compiler:2.54")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
     // ONNX Runtime (On-Device inference)

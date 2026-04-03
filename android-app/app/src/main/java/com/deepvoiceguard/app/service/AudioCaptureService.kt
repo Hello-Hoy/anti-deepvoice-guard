@@ -54,6 +54,10 @@ class AudioCaptureService : Service() {
         const val BUFFER_SIZE_SAMPLES = 512
         const val ACTION_START = "com.deepvoiceguard.ACTION_START"
         const val ACTION_STOP = "com.deepvoiceguard.ACTION_STOP"
+        const val ACTION_START_CALL = "com.deepvoiceguard.ACTION_START_CALL"
+        const val ACTION_STOP_CALL = "com.deepvoiceguard.ACTION_STOP_CALL"
+        const val EXTRA_CALL_DIRECTION = "call_direction"
+        const val EXTRA_PHONE_NUMBER = "phone_number"
     }
 
     // 서비스 상태를 live observable로 노출
@@ -69,6 +73,9 @@ class AudioCaptureService : Service() {
     private val _stats = MutableStateFlow(PipelineStats(0, 0))
     val stats: StateFlow<PipelineStats> = _stats
 
+    private val _callSession = MutableStateFlow<CallSession?>(null)
+    val callSession: StateFlow<CallSession?> = _callSession
+
     inner class LocalBinder : Binder() {
         val service: AudioCaptureService get() = this@AudioCaptureService
     }
@@ -80,6 +87,7 @@ class AudioCaptureService : Service() {
     private var pipeline: AudioPipeline? = null
     private var vadEngine: VadEngine? = null
     private var inferenceEngine: InferenceEngine? = null
+    @Volatile
     private var isRecording = false
 
     override fun onCreate() {
@@ -92,16 +100,35 @@ class AudioCaptureService : Service() {
         when (intent?.action) {
             ACTION_START -> serviceScope.launch { startCapture() }
             ACTION_STOP -> stopCapture()
+            ACTION_START_CALL -> {
+                val direction = intent.getStringExtra(EXTRA_CALL_DIRECTION)
+                    ?.let { CallDirection.valueOf(it) } ?: CallDirection.UNKNOWN
+                val phoneNumber = intent.getStringExtra(EXTRA_PHONE_NUMBER)
+                val session = CallSession(
+                    direction = direction,
+                    phoneNumber = phoneNumber,
+                )
+                serviceScope.launch { startCapture(session) }
+            }
+            ACTION_STOP_CALL -> {
+                _callSession.value = _callSession.value?.end()
+                stopCapture()
+            }
         }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent): IBinder = binder
 
-    private suspend fun startCapture() {
+    private suspend fun startCapture(callSession: CallSession? = null) {
         if (isRecording) return
 
-        startForeground(NOTIFICATION_ID, createNotification("Monitoring..."))
+        _callSession.value = callSession
+        val notifText = if (callSession != null) {
+            val dir = if (callSession.direction == CallDirection.INCOMING) "수신" else "발신"
+            "통화 모니터링 중 ($dir)"
+        } else "Monitoring..."
+        startForeground(NOTIFICATION_ID, createNotification(notifText))
 
         // 설정값 로드
         val settings: AppSettings = settingsRepository.settings.first()
@@ -135,6 +162,9 @@ class AudioCaptureService : Service() {
         // 감지 이벤트 → DB 저장 + 암호화 오디오 저장 + 알림
         serviceScope.launch(Dispatchers.IO) {
             newPipeline.detectionEvents.collect { aggregated ->
+                // callSessionId를 즉시 캡처 (stopCapture()에 의한 null 방지)
+                val currentCallSessionId = _callSession.value?.sessionId
+
                 val audioSegment = newPipeline.ringBuffer.getLast(80_000)
                 val audioFilePath = if (audioSegment.isNotEmpty()) {
                     try { encryptedStorage.saveSegment(audioSegment) } catch (_: Exception) { null }
@@ -150,6 +180,7 @@ class AudioCaptureService : Service() {
                     inferenceMode = inferenceEngine?.getModelInfo()?.type ?: "on_device",
                     threatLevel = aggregated.threatLevel.name,
                     latencyMs = aggregated.latestResult.latencyMs,
+                    callSessionId = currentCallSessionId,
                 )
                 try { detectionDao.insert(entity) } catch (_: Exception) { }
 
@@ -164,8 +195,15 @@ class AudioCaptureService : Service() {
             AudioFormat.ENCODING_PCM_16BIT,
         ).coerceAtLeast(BUFFER_SIZE_SAMPLES * 2)
 
+        // 통화 중: VOICE_COMMUNICATION (AEC 적용), 일반: MIC
+        val audioSource = if (callSession != null) {
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        } else {
+            MediaRecorder.AudioSource.MIC
+        }
+
         audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            audioSource,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -197,8 +235,9 @@ class AudioCaptureService : Service() {
     private fun stopCapture() {
         isRecording = false
         _isMonitoring.value = false
-        audioRecord?.stop()
-        audioRecord?.release()
+        _callSession.value = null
+        runCatching { audioRecord?.stop() }
+        runCatching { audioRecord?.release() }
         audioRecord = null
         vadEngine?.close()
         inferenceEngine?.close()

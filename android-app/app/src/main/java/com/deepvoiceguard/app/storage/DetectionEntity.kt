@@ -16,4 +16,5 @@ data class DetectionEntity(
     val inferenceMode: String,      // "on_device" or "server"
     val threatLevel: String,        // "SAFE", "CAUTION", "WARNING", "DANGER"
     val latencyMs: Long,
+    val callSessionId: String? = null, // 통화 세션 ID (통화 중 감지 시)
 )

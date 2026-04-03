@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -94,6 +95,58 @@ fun SettingsScreen() {
                 )
                 Text(
                     "Lower = more sensitive, higher = fewer false positives",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 통화 모니터링 설정
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Call Monitoring", style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                SettingRow("Auto-monitor calls", settings.autoStartOnCall) {
+                    scope.launch { repository.setAutoStartOnCall(!settings.autoStartOnCall) }
+                }
+                Text(
+                    "전화 수신/발신 시 자동으로 음성 모니터링을 시작합니다",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                SettingRow("Auto-start on boot", settings.autoStartOnBoot) {
+                    scope.launch { repository.setAutoStartOnBoot(!settings.autoStartOnBoot) }
+                }
+                Text(
+                    "기기 재시작 시 자동으로 서비스를 시작합니다",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 안내 카드
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("About Call Monitoring", style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Android 보안 정책으로 인해 통화 중 상대방의 음성을 직접 캡처할 수 없습니다. " +
+                    "스피커폰 모드에서는 마이크가 양쪽 음성을 모두 수집하므로 " +
+                    "상대방 음성의 딥페이크 여부를 분석할 수 있습니다.\n\n" +
+                    "최적의 탐지를 위해 통화 시 스피커폰 모드를 사용해주세요.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.deepvoiceguard.app.inference.ThreatLevel
 import com.deepvoiceguard.app.service.AudioCaptureService
+import com.deepvoiceguard.app.service.CallDirection
+import com.deepvoiceguard.app.service.CallSession
 
 @Composable
 fun HomeScreen() {
@@ -54,6 +56,7 @@ fun HomeScreen() {
     val latestResult by service?.latestResult?.collectAsState() ?: remember { mutableStateOf(null) }
     val vadProb by service?.vadProbability?.collectAsState() ?: remember { mutableStateOf(0f) }
     val stats by service?.stats?.collectAsState() ?: remember { mutableStateOf(null) }
+    val callSession by service?.callSession?.collectAsState() ?: remember { mutableStateOf<CallSession?>(null) }
     var permissionDenied by remember { mutableStateOf(false) }
 
     // 모니터링 시작 helper
@@ -75,6 +78,11 @@ fun HomeScreen() {
             permissionDenied = true
         }
     }
+
+    // 전화 상태 권한 launcher (통화 자동 감지용)
+    val phonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* granted 여부와 무관하게 기능은 optional */ }
 
     // Service 연결
     val connection = remember {
@@ -114,6 +122,38 @@ fun HomeScreen() {
                     else MaterialTheme.colorScheme.outline,
         )
 
+        // 통화 모니터링 배너
+        if (callSession != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    val dirText = when (callSession?.direction) {
+                        CallDirection.INCOMING -> "수신 통화"
+                        CallDirection.OUTGOING -> "발신 통화"
+                        else -> "통화"
+                    }
+                    Text(
+                        "$dirText 모니터링 중",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    callSession?.phoneNumber?.let { number ->
+                        Text(number, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        "스피커폰 모드에서 상대방 음성 분석 가능",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
 
         // 권한 거부 안내
@@ -146,6 +186,13 @@ fun HomeScreen() {
                             }
                         }
                         permissionLauncher.launch(permissions.toTypedArray())
+                        // 전화 상태 권한도 별도 요청 (optional)
+                        if (ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.READ_PHONE_STATE,
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            phonePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
+                        }
                     }
                 } else {
                     val intent = Intent(context, AudioCaptureService::class.java).apply {

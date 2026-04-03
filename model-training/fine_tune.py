@@ -24,6 +24,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from models.AASIST import Model
 
 
+def _phone_quality_augment(waveform: torch.Tensor) -> torch.Tensor:
+    """전화 통화 품질을 시뮬레이션하는 augmentation.
+    AMR 코덱 대역폭 제한(300-3400Hz), 양자화 노이즈, 패킷 로스를 모사.
+    """
+    # 1. 대역폭 제한 (전화 대역: 300-3400Hz) — 간단한 sinc 필터 근사
+    #    16kHz 기준 나이퀴스트=8000Hz, 3400/8000=0.425
+    n = waveform.shape[0]
+    freq = torch.fft.rfft(waveform)
+    n_freq = freq.shape[0]
+    # 300Hz 이하 차단 (300/8000 = 0.0375)
+    low_cut = int(n_freq * 0.0375)
+    # 3400Hz 이상 차단
+    high_cut = int(n_freq * 0.425)
+    mask = torch.zeros(n_freq)
+    mask[low_cut:high_cut] = 1.0
+    # 부드러운 롤오프
+    rolloff = 50
+    for i in range(min(rolloff, low_cut)):
+        mask[low_cut - i] = i / rolloff
+    for i in range(min(rolloff, n_freq - high_cut)):
+        if high_cut + i < n_freq:
+            mask[high_cut + i] = 1.0 - i / rolloff
+    mask = mask.clamp(0, 1)
+    freq = freq * mask
+    waveform = torch.fft.irfft(freq, n=n)
+
+    # 2. 양자화 노이즈 (8-bit ~= AMR-NB)
+    if random.random() < 0.5:
+        levels = random.choice([128, 256])  # 7-8 bit
+        waveform = torch.round(waveform * levels) / levels
+
+    # 3. 패킷 로스 시뮬레이션 (20ms 프레임 드롭)
+    if random.random() < 0.3:
+        frame_size = 320  # 20ms @ 16kHz
+        n_frames = n // frame_size
+        n_drops = random.randint(1, max(1, n_frames // 20))
+        for _ in range(n_drops):
+            start = random.randint(0, n - frame_size)
+            waveform[start:start + frame_size] = 0.0
+
+    return waveform
+
+
 class AudioDataset(Dataset):
     def __init__(self, csv_path: Path, nb_samp: int = 64600, augment: bool = False):
         self.nb_samp = nb_samp
@@ -60,7 +103,7 @@ class AudioDataset(Dataset):
             start = random.randint(0, waveform.shape[0] - self.nb_samp) if self.augment else 0
             waveform = waveform[start : start + self.nb_samp]
 
-        # Simple augmentation
+        # Augmentation
         if self.augment:
             # Random gain
             gain = random.uniform(0.8, 1.2)
@@ -69,6 +112,9 @@ class AudioDataset(Dataset):
             if random.random() < 0.3:
                 noise = torch.randn_like(waveform) * random.uniform(0.001, 0.005)
                 waveform = waveform + noise
+            # Phone quality simulation (전화 품질 열화)
+            if random.random() < 0.3:
+                waveform = _phone_quality_augment(waveform)
 
         return waveform, item["label"]  # (nb_samp,), label
 
