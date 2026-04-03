@@ -114,6 +114,10 @@ class AudioCaptureService : Service() {
                 _callSession.value = _callSession.value?.end()
                 stopCapture()
             }
+            null -> {
+                // START_STICKY에 의한 재시작 — intent가 null이면 안전하게 종료
+                stopSelf()
+            }
         }
         return START_STICKY
     }

@@ -98,8 +98,8 @@ fun HomeScreen() {
 
     DisposableEffect(Unit) {
         val intent = Intent(context, AudioCaptureService::class.java)
-        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-        onDispose { context.unbindService(connection) }
+        val bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        onDispose { if (bound) runCatching { context.unbindService(connection) } }
     }
 
     Column(
