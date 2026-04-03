@@ -48,7 +48,7 @@ def _phone_quality_augment(waveform: torch.Tensor) -> torch.Tensor:
             mask[high_cut + i] = 1.0 - i / rolloff
     mask = mask.clamp(0, 1)
     freq = freq * mask
-    waveform = torch.fft.irfft(freq, n=n)
+    waveform = torch.fft.irfft(freq, n=n).contiguous()
 
     # 2. 양자화 노이즈 (8-bit ~= AMR-NB)
     if random.random() < 0.5:
