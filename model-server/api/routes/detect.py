@@ -1,8 +1,9 @@
 """Deepfake 음성 탐지 API 엔드포인트."""
 
 import io
-import struct
+import tempfile
 
+import librosa
 import numpy as np
 import soundfile as sf
 from fastapi import APIRouter, HTTPException, UploadFile
@@ -29,29 +30,30 @@ def _read_audio(data: bytes) -> np.ndarray:
     """오디오 바이트를 numpy float32 배열로 변환.
 
     지원 형식:
-    - WAV/FLAC 등 soundfile 지원 형식
-    - raw PCM 16-bit signed (폴백)
+    - WAV/FLAC 등 soundfile 직접 지원 형식
+    - MP3/M4A/AAC/OGG 등 librosa(ffmpeg) 경유 형식
     """
+    # 1차: soundfile (WAV, FLAC 등 — 가장 빠름)
     try:
         audio, sr = sf.read(io.BytesIO(data), dtype="float32")
         if sr != SAMPLE_RATE:
-            # 간단한 리샘플링: 정확한 리샘플링이 필요하면 librosa 사용
-            import librosa
             audio = librosa.resample(audio, orig_sr=sr, target_sr=SAMPLE_RATE)
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        if len(audio) > MAX_SAMPLES:
+            audio = audio[:MAX_SAMPLES]
+        return audio
     except Exception:
-        # raw PCM 16-bit signed little-endian으로 시도
-        n_samples = len(data) // 2
-        audio = np.array(struct.unpack(f"<{n_samples}h", data[:n_samples * 2]), dtype=np.float32)
-        audio /= 32768.0  # normalize to [-1, 1]
+        pass
 
-    # mono로 변환
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
+    # 2차: librosa (ffmpeg 백엔드 — m4a, mp3, aac, ogg 등)
+    with tempfile.NamedTemporaryFile(suffix=".audio", delete=True) as tmp:
+        tmp.write(data)
+        tmp.flush()
+        audio, _ = librosa.load(tmp.name, sr=SAMPLE_RATE, mono=True)
 
-    # 길이 제한
     if len(audio) > MAX_SAMPLES:
         audio = audio[:MAX_SAMPLES]
-
     return audio
 
 
