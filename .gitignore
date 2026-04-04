@@ -11,3 +11,9 @@ model-training/data/real/
 model-training/data/fake/
 model-training/weights/official/*.pth
 model-training/weights/finetuned/*.pth
+
+# Test audio samples (large files)
+test-samples/real/
+test-samples/fake/
+test-samples/fake-diverse/
+test-samples/real-voice-data/
