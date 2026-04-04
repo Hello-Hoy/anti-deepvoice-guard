@@ -1,6 +1,4 @@
 .venv/
-*.onnx
-*.pth
 __pycache__/
 *.pdf
 .DS_Store
@@ -9,7 +7,13 @@ model_server
 # Training data (too large for git)
 model-training/data/real/
 model-training/data/fake/
+model-training/data/train.csv
+model-training/data/val.csv
+
+# Official pretrained weights (download separately)
 model-training/weights/official/*.pth
+
+# Training checkpoint weights (large, reproducible)
 model-training/weights/finetuned/*.pth
 
 # Test audio samples (large files)
