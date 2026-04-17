@@ -27,8 +27,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.deepvoiceguard.app.storage.CleanupWorker
 import com.deepvoiceguard.app.storage.DetectionDatabase
 import com.deepvoiceguard.app.storage.DetectionEntity
+import com.deepvoiceguard.app.storage.EncryptedStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -40,6 +42,7 @@ import java.util.Locale
 fun HistoryScreen() {
     val context = LocalContext.current
     val db = remember { DetectionDatabase.getInstance(context) }
+    val encryptedStorage = remember { EncryptedStorage(context) }
     val detections by db.detectionDao().getAll().collectAsState(initial = emptyList())
 
     Column(
@@ -68,7 +71,30 @@ fun HistoryScreen() {
                 items(detections, key = { it.id }) { detection ->
                     DetectionCard(detection) {
                         CoroutineScope(Dispatchers.IO).launch {
-                            db.detectionDao().deleteById(detection.id)
+                            // **DB-first 순서** — DB row가 canonical. row 삭제 성공 후 file 삭제 시도.
+                            //  - DB 실패: 아무 상태 변경 없음 (file 유지, row 유지) — 재시도 가능.
+                            //  - DB 성공, file 실패: row는 사라지고 file이 orphan. CleanupWorker가
+                            //    age/quota 기준으로 나중에 자동 삭제. data-loss는 의도된 delete.
+                            val path = detection.audioFilePath
+                            val dbOk = runCatching { db.detectionDao().deleteById(detection.id) }
+                                .isSuccess
+                            if (!dbOk) {
+                                android.util.Log.w("HistoryScreen", "history delete — DB row removal failed")
+                                return@launch
+                            }
+                            if (path != null) {
+                                val fileOk = runCatching { encryptedStorage.deleteSegment(path) }
+                                    .getOrDefault(false)
+                                if (!fileOk) {
+                                    android.util.Log.w(
+                                        "HistoryScreen",
+                                        "history delete — DB row removed but file cleanup failed: $path. " +
+                                            "Scheduling one-shot CleanupWorker retry."
+                                    )
+                                    // **즉시 one-shot cleanup 스케줄** — age와 무관하게 retry.
+                                    CleanupWorker.scheduleOrphanCleanup(context, path)
+                                }
+                            }
                         }
                     }
                 }
@@ -80,13 +106,19 @@ fun HistoryScreen() {
 @Composable
 private fun DetectionCard(detection: DetectionEntity, onDelete: () -> Unit) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-    val containerColor = when (detection.threatLevel) {
+    // **combinedThreatLevel이 canonical severity** — CRITICAL 등 escalation 표시.
+    // 레거시 레코드(combinedThreatLevel="SAFE" 기본값)도 threatLevel로 fallback.
+    val effectiveLevel = detection.combinedThreatLevel.takeUnless { it == "SAFE" }
+        ?: detection.threatLevel
+    val containerColor = when (effectiveLevel) {
+        "CRITICAL" -> MaterialTheme.colorScheme.errorContainer
         "DANGER" -> MaterialTheme.colorScheme.errorContainer
         "WARNING" -> MaterialTheme.colorScheme.tertiaryContainer
         "CAUTION" -> MaterialTheme.colorScheme.secondaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val icon = when (detection.threatLevel) {
+    val icon = when (effectiveLevel) {
+        "CRITICAL" -> "🔥"
         "DANGER" -> "🚨"
         "WARNING" -> "⚠️"
         "CAUTION" -> "📋"
@@ -106,13 +138,15 @@ private fun DetectionCard(detection: DetectionEntity, onDelete: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     "$icon ${dateFormat.format(Date(detection.timestamp))} | " +
+                            "$effectiveLevel | " +
                             "Score: ${String.format("%.2f", detection.fakeScore)}",
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     "${detection.durationMs / 1000f}s | " +
                             "${detection.inferenceMode} | " +
-                            "${detection.latencyMs}ms",
+                            "${detection.latencyMs}ms" +
+                            (if (detection.phishingScore > 0.1f) " | 피싱 ${String.format("%.2f", detection.phishingScore)}" else ""),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

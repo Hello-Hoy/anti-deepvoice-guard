@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [DetectionEntity::class], version = 2, exportSchema = false)
+@Database(entities = [DetectionEntity::class], version = 3, exportSchema = true)
 abstract class DetectionDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
 
@@ -21,6 +21,16 @@ abstract class DetectionDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE detections ADD COLUMN phishingScore REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE detections ADD COLUMN phishingKeywords TEXT")
+                db.execSQL("ALTER TABLE detections ADD COLUMN transcription TEXT")
+                db.execSQL("ALTER TABLE detections ADD COLUMN combinedThreatLevel TEXT NOT NULL DEFAULT 'SAFE'")
+                db.execSQL("ALTER TABLE detections ADD COLUMN sttAvailable INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         fun getInstance(context: Context): DetectionDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -28,7 +38,7 @@ abstract class DetectionDatabase : RoomDatabase() {
                     DetectionDatabase::class.java,
                     "deepvoice_guard.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance

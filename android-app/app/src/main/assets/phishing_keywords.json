@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "description": "보이스피싱 키워드 사전 v1.0",
+  "keywords": [
+    {"keyword": "검찰", "category": "IMPERSONATION", "weight": 0.4, "synonyms": ["검찰청", "검사"]},
+    {"keyword": "경찰", "category": "IMPERSONATION", "weight": 0.4, "synonyms": ["경찰청", "경찰관", "수사관"]},
+    {"keyword": "금융감독원", "category": "IMPERSONATION", "weight": 0.5, "synonyms": ["금감원"]},
+    {"keyword": "국세청", "category": "IMPERSONATION", "weight": 0.4, "synonyms": []},
+    {"keyword": "법원", "category": "IMPERSONATION", "weight": 0.3, "synonyms": []},
+    {"keyword": "수사관", "category": "IMPERSONATION", "weight": 0.4, "synonyms": ["수사 담당"]},
+    {"keyword": "담당자", "category": "IMPERSONATION", "weight": 0.2, "synonyms": []},
+    {"keyword": "은행 직원", "category": "IMPERSONATION", "weight": 0.2, "synonyms": ["은행원"]},
+    {"keyword": "금융위원회", "category": "IMPERSONATION", "weight": 0.4, "synonyms": ["금융위"]},
+
+    {"keyword": "긴급", "category": "URGENCY", "weight": 0.2, "synonyms": ["긴급하게", "급하게"]},
+    {"keyword": "즉시", "category": "URGENCY", "weight": 0.2, "synonyms": ["당장", "지금 바로", "지금 당장"]},
+    {"keyword": "빨리", "category": "URGENCY", "weight": 0.1, "synonyms": ["서둘러", "급히"]},
+    {"keyword": "오늘 안에", "category": "URGENCY", "weight": 0.2, "synonyms": ["오늘 중으로", "금일 내"]},
+    {"keyword": "시간이 없", "category": "URGENCY", "weight": 0.2, "synonyms": ["시간 없"]},
+
+    {"keyword": "계좌이체", "category": "FINANCIAL_ACTION", "weight": 0.4, "synonyms": ["계좌 이체", "송금", "이체"]},
+    {"keyword": "현금 인출", "category": "FINANCIAL_ACTION", "weight": 0.4, "synonyms": ["현금인출", "출금", "인출"]},
+    {"keyword": "atm", "category": "FINANCIAL_ACTION", "weight": 0.3, "synonyms": ["현금인출기", "자동화기기"]},
+    {"keyword": "안전한 계좌", "category": "FINANCIAL_ACTION", "weight": 0.5, "synonyms": ["안전계좌", "보호계좌", "국가 안전 계좌"]},
+    {"keyword": "대포통장", "category": "FINANCIAL_ACTION", "weight": 0.4, "synonyms": []},
+    {"keyword": "입금", "category": "FINANCIAL_ACTION", "weight": 0.2, "synonyms": ["넣어", "보내"]},
+    {"keyword": "인터넷뱅킹", "category": "FINANCIAL_ACTION", "weight": 0.2, "synonyms": ["모바일뱅킹", "뱅킹"]},
+    {"keyword": "자금 세탁", "category": "FINANCIAL_ACTION", "weight": 0.4, "synonyms": []},
+
+    {"keyword": "주민등록번호", "category": "PERSONAL_INFO", "weight": 0.3, "synonyms": ["주민번호", "주민등록"]},
+    {"keyword": "계좌번호", "category": "PERSONAL_INFO", "weight": 0.3, "synonyms": ["통장번호"]},
+    {"keyword": "비밀번호", "category": "PERSONAL_INFO", "weight": 0.3, "synonyms": ["비번", "패스워드"]},
+    {"keyword": "otp", "category": "PERSONAL_INFO", "weight": 0.3, "synonyms": ["인증번호", "보안카드", "보안 카드"]},
+    {"keyword": "카드번호", "category": "PERSONAL_INFO", "weight": 0.3, "synonyms": []},
+    {"keyword": "cvv", "category": "PERSONAL_INFO", "weight": 0.3, "synonyms": ["cvc", "보안코드"]},
+
+    {"keyword": "체포", "category": "THREAT", "weight": 0.3, "synonyms": ["체포영장", "체포 영장"]},
+    {"keyword": "구속", "category": "THREAT", "weight": 0.3, "synonyms": ["구속영장", "구속 영장"]},
+    {"keyword": "범죄", "category": "THREAT", "weight": 0.2, "synonyms": ["범죄 연루", "연루"]},
+    {"keyword": "혐의", "category": "THREAT", "weight": 0.2, "synonyms": ["피의자"]},
+    {"keyword": "수사", "category": "THREAT", "weight": 0.2, "synonyms": ["수사 중", "조사"]},
+    {"keyword": "명의도용", "category": "THREAT", "weight": 0.3, "synonyms": ["명의 도용", "도용"]},
+    {"keyword": "처벌", "category": "THREAT", "weight": 0.2, "synonyms": ["벌금", "징역"]},
+    {"keyword": "불이익", "category": "THREAT", "weight": 0.2, "synonyms": ["불이익을 받"]},
+    {"keyword": "고소", "category": "THREAT", "weight": 0.2, "synonyms": ["고발", "신고"]},
+    {"keyword": "압수수색", "category": "THREAT", "weight": 0.3, "synonyms": ["압수 수색"]}
+  ]
+}

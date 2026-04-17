@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "description": "보이스피싱 구문 패턴 v1.0 — 실제 피싱 시나리오 기반",
+  "phrases": [
+    {"phrase": "검찰청 수사관", "weight": 1.5, "category": "IMPERSONATION"},
+    {"phrase": "중앙지검 수사관", "weight": 1.5, "category": "IMPERSONATION"},
+    {"phrase": "금융감독원 직원", "weight": 1.5, "category": "IMPERSONATION"},
+    {"phrase": "수사에 협조", "weight": 1.2, "category": "IMPERSONATION"},
+    {"phrase": "사건 번호", "weight": 1.0, "category": "IMPERSONATION"},
+    {"phrase": "출석 요구", "weight": 1.0, "category": "IMPERSONATION"},
+
+    {"phrase": "안전한 계좌로 이체", "weight": 2.0, "category": "FINANCIAL_ACTION"},
+    {"phrase": "계좌가 범죄에 연루", "weight": 1.8, "category": "FINANCIAL_ACTION"},
+    {"phrase": "자금을 보호하기 위해", "weight": 1.5, "category": "FINANCIAL_ACTION"},
+    {"phrase": "보호 조치를 위해", "weight": 1.2, "category": "FINANCIAL_ACTION"},
+    {"phrase": "국가 안전 계좌", "weight": 2.0, "category": "FINANCIAL_ACTION"},
+    {"phrase": "임시 보호 계좌", "weight": 1.8, "category": "FINANCIAL_ACTION"},
+    {"phrase": "현금을 인출해서", "weight": 1.5, "category": "FINANCIAL_ACTION"},
+
+    {"phrase": "명의가 도용", "weight": 1.5, "category": "PERSONAL_INFO"},
+    {"phrase": "개인정보가 유출", "weight": 1.5, "category": "PERSONAL_INFO"},
+    {"phrase": "본인 확인을 위해", "weight": 0.8, "category": "PERSONAL_INFO"},
+    {"phrase": "주민번호 뒷자리", "weight": 1.2, "category": "PERSONAL_INFO"},
+
+    {"phrase": "체포 영장이 발부", "weight": 1.8, "category": "THREAT"},
+    {"phrase": "구속 영장이 발부", "weight": 1.8, "category": "THREAT"},
+    {"phrase": "범죄 혐의가 있", "weight": 1.5, "category": "THREAT"},
+    {"phrase": "수사를 받게 될", "weight": 1.2, "category": "THREAT"},
+
+    {"phrase": "지금 바로 현금", "weight": 1.5, "category": "URGENCY"},
+    {"phrase": "오늘 안에 처리", "weight": 1.2, "category": "URGENCY"},
+    {"phrase": "지금 즉시 이체", "weight": 1.5, "category": "URGENCY"},
+    {"phrase": "시간이 얼마 없", "weight": 1.0, "category": "URGENCY"},
+
+    {"phrase": "대출 승인이 되었", "weight": 1.0, "category": "FINANCIAL_ACTION"},
+    {"phrase": "저금리로 대환", "weight": 1.2, "category": "FINANCIAL_ACTION"},
+    {"phrase": "수수료를 먼저 입금", "weight": 1.8, "category": "FINANCIAL_ACTION"},
+    {"phrase": "보증금을 납부", "weight": 1.5, "category": "FINANCIAL_ACTION"}
+  ]
+}

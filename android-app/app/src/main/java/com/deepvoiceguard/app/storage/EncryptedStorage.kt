@@ -1,9 +1,12 @@
 package com.deepvoiceguard.app.storage
 
 import android.content.Context
+import android.util.Log
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.MasterKey
 import java.io.File
+import java.io.IOException
+import java.security.GeneralSecurityException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -13,6 +16,10 @@ import java.util.Locale
  * AndroidKeyStore에서 마스터키를 관리한다.
  */
 class EncryptedStorage(private val context: Context) {
+
+    companion object {
+        private const val TAG = "EncryptedStorage"
+    }
 
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -26,14 +33,15 @@ class EncryptedStorage(private val context: Context) {
         }
 
     /**
-     * 오디오 세그먼트를 암호화하여 저장하고 파일 경로를 반환한다.
+     * 오디오 세그먼트를 `.pending` 확장자로 암호화 저장한다.
      *
-     * @param audio Float 배열 (16kHz mono PCM)
-     * @return 저장된 암호화 파일의 절대 경로
+     * **.pending은 영구 확장자**: DB row가 이 path 그대로 참조. CleanupWorker는 DB에서
+     * 참조된 `.pending`은 절대 삭제하지 않고, DB 참조 없는 orphan만 10분 age 후 삭제한다.
+     * rename을 하지 않아 commit-before-insert race가 원천 제거됨 (H84).
      */
     fun saveSegment(audio: FloatArray): String {
         val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(Date())
-        val file = File(storageDir, "$timestamp.enc")
+        val file = File(storageDir, "$timestamp.pending")
 
         val encryptedFile = EncryptedFile.Builder(
             context,
@@ -67,9 +75,9 @@ class EncryptedStorage(private val context: Context) {
      */
     fun loadSegment(filePath: String): FloatArray? {
         val file = File(filePath)
-        if (!file.exists() || !isUnderStorageDir(file)) return null
-
         return try {
+            if (!file.exists() || !isUnderStorageDir(file)) return null
+
             val encryptedFile = EncryptedFile.Builder(
                 context,
                 file,
@@ -103,15 +111,27 @@ class EncryptedStorage(private val context: Context) {
                 }
                 audio
             }
-        } catch (_: Exception) {
+        } catch (t: GeneralSecurityException) {
+            Log.w(TAG, "loadSegment failed: $filePath", t)
+            null
+        } catch (t: IOException) {
+            Log.w(TAG, "loadSegment failed: $filePath", t)
+            null
+        } catch (t: Throwable) {
+            Log.w(TAG, "loadSegment failed: $filePath", t)
             null  // 복호화/키스토어 실패 시 fail-closed
         }
     }
 
-    /** 특정 파일 삭제 (storageDir 하위만 허용). */
+    /**
+     * 특정 파일 삭제 (storageDir 하위만 허용).
+     * **ENOENT는 success로 간주** — 이미 없는 파일은 삭제 의도가 충족된 상태.
+     * HistoryScreen atomic delete flow에서 undeletable row를 만들지 않기 위함.
+     */
     fun deleteSegment(filePath: String): Boolean {
         val file = File(filePath)
         if (!isUnderStorageDir(file)) return false
+        if (!file.exists()) return true  // ENOENT → already gone, success.
         return file.delete()
     }
 
@@ -124,15 +144,7 @@ class EncryptedStorage(private val context: Context) {
         return storageDir.listFiles()?.sumOf { it.length() } ?: 0
     }
 
-    /** 특정 시각 이전의 파일 삭제, 삭제된 파일 수 반환. */
-    fun deleteOlderThan(beforeMs: Long): Int {
-        val files = storageDir.listFiles() ?: return 0
-        var deleted = 0
-        for (file in files) {
-            if (file.lastModified() < beforeMs) {
-                if (file.delete()) deleted++
-            }
-        }
-        return deleted
-    }
+    /** storageDir 내 전체 파일 경로 목록 (orphan sweep용). */
+    fun listAllPaths(): List<String> =
+        storageDir.listFiles()?.map { it.absolutePath } ?: emptyList()
 }

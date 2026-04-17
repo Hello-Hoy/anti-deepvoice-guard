@@ -35,9 +35,8 @@ class VadEngine(context: Context, modelFileName: String = "silero_vad.onnx") {
     private var speechStartMs = 0L
     private var totalFrames = 0L
 
-    // Silero VAD 내부 상태 (h, c)
-    private var h = FloatArray(2 * 1 * 64)  // (2, 1, 64)
-    private var c = FloatArray(2 * 1 * 64)
+    // Silero VAD v5 내부 상태 — (2, 1, 128) 단일 텐서로 통합.
+    private var state0 = FloatArray(2 * 1 * 128)
 
     var listener: Listener? = null
 
@@ -90,28 +89,23 @@ class VadEngine(context: Context, modelFileName: String = "silero_vad.onnx") {
     }
 
     private fun runInference(frame: FloatArray): Float {
+        // Silero VAD v5 signature: input(1, 512), state(2, 1, 128), sr(scalar).
         val inputTensor = OnnxTensor.createTensor(
             env,
             FloatBuffer.wrap(frame),
             longArrayOf(1, WINDOW_SIZE.toLong())
         )
         val srTensor = OnnxTensor.createTensor(env, longArrayOf(SAMPLE_RATE))
-        val hTensor = OnnxTensor.createTensor(
+        val stateTensor = OnnxTensor.createTensor(
             env,
-            FloatBuffer.wrap(h),
-            longArrayOf(2, 1, 64)
-        )
-        val cTensor = OnnxTensor.createTensor(
-            env,
-            FloatBuffer.wrap(c),
-            longArrayOf(2, 1, 64)
+            FloatBuffer.wrap(state0),
+            longArrayOf(2, 1, 128)
         )
 
         val inputs = mapOf(
             "input" to inputTensor,
+            "state" to stateTensor,
             "sr" to srTensor,
-            "h" to hTensor,
-            "c" to cTensor,
         )
 
         val results = session.run(inputs)
@@ -119,30 +113,15 @@ class VadEngine(context: Context, modelFileName: String = "silero_vad.onnx") {
         val output = (results[0].value as Array<*>)[0] as FloatArray
         val probability = output[0]
 
-        // 내부 상태 업데이트
-        val hn = results[1].value
-        val cn = results[2].value
-        if (hn is Array<*>) {
-            // flatten to h array
+        // stateN (2, 1, 128) → state0 flatten.
+        val stateN = results[1].value
+        if (stateN is Array<*>) {
             var idx = 0
-            for (layer in hn) {
+            for (layer in stateN) {
                 if (layer is Array<*>) {
                     for (batch in layer) {
                         if (batch is FloatArray) {
-                            batch.copyInto(h, idx)
-                            idx += batch.size
-                        }
-                    }
-                }
-            }
-        }
-        if (cn is Array<*>) {
-            var idx = 0
-            for (layer in cn) {
-                if (layer is Array<*>) {
-                    for (batch in layer) {
-                        if (batch is FloatArray) {
-                            batch.copyInto(c, idx)
+                            batch.copyInto(state0, idx)
                             idx += batch.size
                         }
                     }
@@ -153,8 +132,7 @@ class VadEngine(context: Context, modelFileName: String = "silero_vad.onnx") {
         results.close()
         inputTensor.close()
         srTensor.close()
-        hTensor.close()
-        cTensor.close()
+        stateTensor.close()
 
         return probability
     }
@@ -163,8 +141,7 @@ class VadEngine(context: Context, modelFileName: String = "silero_vad.onnx") {
         state = State.SILENCE
         frameCount = 0
         totalFrames = 0
-        h.fill(0f)
-        c.fill(0f)
+        state0.fill(0f)
     }
 
     fun currentState(): State = state
