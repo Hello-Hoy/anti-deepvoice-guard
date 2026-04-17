@@ -1,6 +1,7 @@
 package com.deepvoiceguard.app.di
 
 import android.content.Context
+import com.deepvoiceguard.app.audio.NarrowbandPreprocessor
 import com.deepvoiceguard.app.inference.CombinedThreatAggregator
 import com.deepvoiceguard.app.phishing.PhishingKeywordDetector
 import com.deepvoiceguard.app.stt.SttCapabilityChecker
@@ -52,4 +53,9 @@ object AppModule {
     @Singleton
     fun provideCombinedThreatAggregator(): CombinedThreatAggregator =
         CombinedThreatAggregator()
+
+    @Provides
+    @Singleton
+    fun provideNarrowbandPreprocessor(): NarrowbandPreprocessor =
+        NarrowbandPreprocessor()
 }

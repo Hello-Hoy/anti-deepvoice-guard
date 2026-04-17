@@ -63,6 +63,7 @@ class AudioCaptureService : Service() {
     @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var phishingDetector: PhishingKeywordDetector
     @Inject lateinit var combinedAggregator: CombinedThreatAggregator
+    @Inject lateinit var narrowbandPreprocessor: com.deepvoiceguard.app.audio.NarrowbandPreprocessor
     private lateinit var notificationHelper: NotificationHelper
 
     companion object {
@@ -366,6 +367,11 @@ class AudioCaptureService : Service() {
             sttEngine = null,
             phishingDetector = null,
             combinedAggregator = combinedAggregator,
+            // 도메인 mismatch 보정: 라이브 마이크 입력을 narrowband로 전처리해 AASIST에 전달.
+            // settings.liveNarrowbandEnabled=false 시 null → 전처리 skip (디버그/A-B 비교용).
+            // NOTE: 다른 설정(threshold, sttEnabled 등)과 동일하게 capture 시작 시점 snapshot만 사용.
+            //       런타임 토글은 다음 START/STOP 사이클부터 반영됨.
+            narrowbandPreprocessor = if (settings.liveNarrowbandEnabled) narrowbandPreprocessor else null,
         )
         pipeline = newPipeline
 

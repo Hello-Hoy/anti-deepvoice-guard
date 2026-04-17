@@ -27,6 +27,7 @@ data class AppSettings(
     val hybridModeEnabled: Boolean = false,          // 하이브리드 서버 모드
     val dataConsentLevel: String = "none",           // "none", "metadata", "full"
     val demoMode: Boolean = false,                   // 데모 모드
+    val liveNarrowbandEnabled: Boolean = true,       // 라이브 마이크 narrowband 전처리 (도메인 mismatch 보정)
 )
 
 class SettingsRepository(private val context: Context) {
@@ -44,6 +45,7 @@ class SettingsRepository(private val context: Context) {
         val HYBRID_MODE_ENABLED = booleanPreferencesKey("hybrid_mode_enabled")
         val DATA_CONSENT_LEVEL = stringPreferencesKey("data_consent_level")
         val DEMO_MODE = booleanPreferencesKey("demo_mode")
+        val LIVE_NARROWBAND_ENABLED = booleanPreferencesKey("live_narrowband_enabled")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -60,7 +62,12 @@ class SettingsRepository(private val context: Context) {
             hybridModeEnabled = prefs[Keys.HYBRID_MODE_ENABLED] ?: false,
             dataConsentLevel = prefs[Keys.DATA_CONSENT_LEVEL] ?: "none",
             demoMode = prefs[Keys.DEMO_MODE] ?: false,
+            liveNarrowbandEnabled = prefs[Keys.LIVE_NARROWBAND_ENABLED] ?: true,
         )
+    }
+
+    suspend fun setLiveNarrowbandEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.LIVE_NARROWBAND_ENABLED] = value }
     }
 
     suspend fun setUseOnDevice(value: Boolean) {

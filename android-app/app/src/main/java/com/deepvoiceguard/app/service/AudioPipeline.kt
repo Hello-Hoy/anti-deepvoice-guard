@@ -45,6 +45,11 @@ class AudioPipeline(
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val phishingExpiryMs: Long = 60_000L,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
+    // **도메인 mismatch 보정**: 라이브 마이크 입력을 AASIST 학습 분포(narrowband ~3kHz)로 맞추는
+    // 전처리. null이면 원본 segment를 AASIST에 그대로 전달 (테스트/레거시 호환).
+    // 주의: VAD와 ring buffer/audio snapshot은 **원본 PCM**을 그대로 쓴다 — 필터링된 신호는
+    // 오직 inferenceEngine.detect 입력으로만 사용.
+    private val narrowbandPreprocessor: com.deepvoiceguard.app.audio.NarrowbandPreprocessor? = null,
 ) {
     companion object {
         private const val TAG = "AudioPipeline"
@@ -281,7 +286,10 @@ class AudioPipeline(
     private suspend fun analyzeSegments(durationMs: Long) = inferenceMutex.withLock {
         val segments = segmentExtractor.extract(durationMs)
         for (segment in segments) {
-            val result: DetectionResult = inferenceEngine.detect(segment)
+            // **도메인 mismatch 보정**: AASIST에는 narrowband 필터링된 segment를 전달하되,
+            // ring buffer / audio snapshot / VAD는 원본 PCM을 그대로 유지.
+            val inferenceInput = narrowbandPreprocessor?.process(segment) ?: segment
+            val result: DetectionResult = inferenceEngine.detect(inferenceInput)
             segmentsAnalyzed++
 
             val aggregated = aggregator.add(result)
