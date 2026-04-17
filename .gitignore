@@ -21,3 +21,16 @@ test-samples/real/
 test-samples/fake/
 test-samples/fake-diverse/
 test-samples/real-voice-data/
+
+# Legacy pretrained weights
+model-training/weights/legacy/*.pth
+
+# Training corpus text data
+model-training/data/text_corpus.txt
+model-training/data/*.txt
+
+# R session history
+.Rhistory
+
+# Local gradle JVM config (machine-specific)
+android-app/gradle/gradle-daemon-jvm.properties
