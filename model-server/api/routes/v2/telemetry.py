@@ -8,6 +8,7 @@
 - /stats 엔드포인트는 동일 API key 필요 + 내부용
 """
 
+import hmac
 import os
 import time
 from collections import deque
@@ -50,7 +51,8 @@ def require_api_key(request: Request) -> str:
             detail="Telemetry endpoint disabled (TELEMETRY_API_KEY not set)",
         )
     provided = request.headers.get("x-api-key", "")
-    if provided != _API_KEY:
+    # constant-time 비교 — CWE-208 timing side-channel 차단 (OWASP ASVS V2.10.3).
+    if not hmac.compare_digest(provided, _API_KEY):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing X-API-Key",

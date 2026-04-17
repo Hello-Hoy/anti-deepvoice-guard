@@ -32,7 +32,9 @@ class NotificationHelper(private val context: Context) {
         const val PHISHING_CHANNEL_ID = "phishing_alert_channel"
         const val COMBINED_CHANNEL_ID = "combined_alert_channel"
         private const val SERVICE_ERROR_NOTIFICATION_ID = 2001
-        private var notificationId = 1000
+        // long-running foreground service에서 1001회 이상 post 시 SERVICE_ERROR_NOTIFICATION_ID(2001)과
+        // 충돌해 '탐지 중단' 배너를 덮어쓰거나 그 반대로 서로를 지우는 문제가 있어 10_000부터 시작한다.
+        private var notificationId = 10_000
         private const val COOLDOWN_MS = 30_000L
         // **H106**: incident는 이 시간 동안 elevated alert가 없으면 만료되어 rank가 리셋된다.
         // 만료 이후 같은 session에서 새 WARNING/CAUTION 이벤트가 생겨도 post 가능.
