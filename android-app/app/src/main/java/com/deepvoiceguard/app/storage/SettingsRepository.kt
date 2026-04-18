@@ -13,6 +13,12 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+/**
+ * 캡처 오디오 소스 선택. 에뮬레이터/디버그 환경에서 호스트 마이크 라우팅이 실패할 때
+ * WAV asset에서 stream하는 FILE 모드로 전환 가능. 기본값은 MIC (실기기 정상 경로).
+ */
+enum class AudioSourceMode { MIC, FILE }
+
 data class AppSettings(
     val useOnDevice: Boolean = true,
     val serverUrl: String = "http://192.168.0.100:8000",
@@ -28,6 +34,8 @@ data class AppSettings(
     val dataConsentLevel: String = "none",           // "none", "metadata", "full"
     val demoMode: Boolean = false,                   // 데모 모드
     val liveNarrowbandEnabled: Boolean = true,       // 라이브 마이크 narrowband 전처리 (도메인 mismatch 보정)
+    val audioSourceMode: AudioSourceMode = AudioSourceMode.MIC,  // MIC = AudioRecord, FILE = WAV asset stream
+    val debugFileAssetPath: String = "demo/demo_04.wav",          // FILE 모드에서 재생할 asset 경로
 )
 
 class SettingsRepository(private val context: Context) {
@@ -46,6 +54,8 @@ class SettingsRepository(private val context: Context) {
         val DATA_CONSENT_LEVEL = stringPreferencesKey("data_consent_level")
         val DEMO_MODE = booleanPreferencesKey("demo_mode")
         val LIVE_NARROWBAND_ENABLED = booleanPreferencesKey("live_narrowband_enabled")
+        val AUDIO_SOURCE_MODE = stringPreferencesKey("audio_source_mode")
+        val DEBUG_FILE_ASSET_PATH = stringPreferencesKey("debug_file_asset_path")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -63,11 +73,23 @@ class SettingsRepository(private val context: Context) {
             dataConsentLevel = prefs[Keys.DATA_CONSENT_LEVEL] ?: "none",
             demoMode = prefs[Keys.DEMO_MODE] ?: false,
             liveNarrowbandEnabled = prefs[Keys.LIVE_NARROWBAND_ENABLED] ?: true,
+            audioSourceMode = runCatching {
+                AudioSourceMode.valueOf(prefs[Keys.AUDIO_SOURCE_MODE] ?: "MIC")
+            }.getOrDefault(AudioSourceMode.MIC),
+            debugFileAssetPath = prefs[Keys.DEBUG_FILE_ASSET_PATH] ?: "demo/demo_04.wav",
         )
     }
 
     suspend fun setLiveNarrowbandEnabled(value: Boolean) {
         context.dataStore.edit { it[Keys.LIVE_NARROWBAND_ENABLED] = value }
+    }
+
+    suspend fun setAudioSourceMode(value: AudioSourceMode) {
+        context.dataStore.edit { it[Keys.AUDIO_SOURCE_MODE] = value.name }
+    }
+
+    suspend fun setDebugFileAssetPath(value: String) {
+        context.dataStore.edit { it[Keys.DEBUG_FILE_ASSET_PATH] = value }
     }
 
     suspend fun setUseOnDevice(value: Boolean) {

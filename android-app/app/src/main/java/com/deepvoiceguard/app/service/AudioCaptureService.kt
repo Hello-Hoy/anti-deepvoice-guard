@@ -64,6 +64,11 @@ class AudioCaptureService : Service() {
     @Inject lateinit var phishingDetector: PhishingKeywordDetector
     @Inject lateinit var combinedAggregator: CombinedThreatAggregator
     @Inject lateinit var narrowbandPreprocessor: com.deepvoiceguard.app.audio.NarrowbandPreprocessor
+    @Inject lateinit var fileAudioSource: com.deepvoiceguard.app.audio.FileAudioSource
+
+    // FILE mode stream job — stopCapture 전에 명시적으로 cancelAndJoin해야 stale 데이터가
+    // drain 윈도우 안에서 파이프라인에 더 들어가지 않는다.
+    @Volatile private var fileStreamJob: kotlinx.coroutines.Job? = null
     private lateinit var notificationHelper: NotificationHelper
 
     companion object {
@@ -83,6 +88,12 @@ class AudioCaptureService : Service() {
     // 서비스 상태를 live observable로 노출
     private val _isMonitoring = MutableStateFlow(false)
     val isMonitoring: StateFlow<Boolean> = _isMonitoring
+
+    // FILE mode 시 실제 스트리밍 중인 asset 경로를 외부(UI 배지)에 노출.
+    // null이면 MIC mode이거나 monitoring off. 라이브 Settings 변경이 아닌 capture 시작 시점의
+    // snapshot이 보이도록 보장.
+    private val _activeFileAssetPath = MutableStateFlow<String?>(null)
+    val activeFileAssetPath: StateFlow<String?> = _activeFileAssetPath
 
     private val _latestResult = MutableStateFlow<AggregatedResult?>(null)
     val latestResult: StateFlow<AggregatedResult?> = _latestResult
@@ -709,7 +720,51 @@ class AudioCaptureService : Service() {
             }
         }
 
-        // AudioRecord 설정
+        // **FILE mode 분기 판정** — Apple Silicon 에뮬레이터 마이크 우회. AudioRecord 초기화/루프만
+        // skip하고 그 외 설정 (epoch, STT reconcile watcher, phishing watcher) 등은 공통 경로로 유지.
+        val fileMode = settings.audioSourceMode == com.deepvoiceguard.app.storage.AudioSourceMode.FILE
+        if (fileMode) {
+            myEpoch = captureEpoch.incrementAndGet()
+            currentShutdownWatermark = myShutdownWatermark
+            sttRecoveryAttempts.set(0)
+            isShuttingDown.set(false)
+            _isMonitoring.value = true
+            val assetPath = settings.debugFileAssetPath
+            _activeFileAssetPath.value = assetPath
+            android.util.Log.i(
+                TAG,
+                "Starting FILE mode capture: asset=$assetPath (epoch=$myEpoch)",
+            )
+            fileStreamJob = capScope.launch(Dispatchers.IO) {
+                try {
+                    fileAudioSource.streamAsset(
+                        assetPath = assetPath,
+                        realtimePacing = true,
+                    ) { shortFrame, readSize ->
+                        // Shutdown 중이면 더 밀어넣지 않음 — drain 윈도우 보호.
+                        if (isShuttingDown.get()) return@streamAsset
+                        pipeline?.processAudioChunk(shortFrame, readSize)
+                    }
+                    android.util.Log.i(TAG, "FILE mode stream finished")
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "FILE mode stream failed", e)
+                    notificationHelper.showServiceError(
+                        "파일 재생 실패: ${e.message ?: "unknown"}",
+                    )
+                }
+                // 완료 시 ACTION_STOP (epoch 가드로 stale teardown 방지).
+                if (captureEpoch.get() == myEpoch && !isShuttingDown.get()) {
+                    val stopIntent = Intent(this@AudioCaptureService, AudioCaptureService::class.java)
+                        .apply { action = ACTION_STOP }
+                    runCatching { startService(stopIntent) }
+                }
+            }
+        }
+
+        // AudioRecord 설정 — FILE mode에서는 skip.
+        if (!fileMode) {
         val bufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -768,6 +823,7 @@ class AudioCaptureService : Service() {
                 }
             }
         }
+        } // end of `if (!fileMode)` — AudioRecord 경로 skip in FILE mode.
 
         // **Live consent watcher** — pipeline + isRecording 활성화 후 시작.
         // 초기 STT 부착도 이 reconcile 단계에서 수행 (스냅샷 기반 즉시 시작 X).
@@ -1048,6 +1104,16 @@ class AudioCaptureService : Service() {
         runCatching { audioRecord?.stop() }
         runCatching { audioRecord?.release() }
         audioRecord = null
+        _activeFileAssetPath.value = null
+        // FILE mode stream coroutine도 pipeline drain 전에 먼저 멈춰 drain 윈도우 동안
+        // 추가 frame이 밀려들어오지 않도록 한다.
+        val fileJob = fileStreamJob
+        fileStreamJob = null
+        if (fileJob != null) {
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(500L) { fileJob.cancelAndJoin() }
+            }
+        }
 
         // 2. **STT drained teardown** — stop → onResults drain → pipeline idle → destroy → detach.
         // applyGateTransition(false)와 동일한 경로로 통일. STT가 없으면 즉시 return하므로

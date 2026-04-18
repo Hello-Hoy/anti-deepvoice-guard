@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -220,6 +221,90 @@ fun SettingsScreen() {
 
         // **H154**: Demo Mode toggle hide — DeepVoiceGuardApp가 settings.demoMode를 읽지 않으므로
         // dead config UI. asset 존재 여부로만 Demo tab이 활성화됨.
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ─── Debug: Audio Source ───
+        // 호스트 마이크 라우팅이 실패하는 에뮬레이터/데모 환경을 위한 파일 injection 옵션.
+        // FILE 모드에서는 AudioRecord 대신 WAV asset을 실시간 페이스로 스트리밍하여
+        // live 파이프라인 전체(VAD/AASIST/알림)를 그대로 통과시킨다.
+        Text(
+            "디버그: 오디오 소스 (에뮬레이터 테스트용)",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "입력 소스",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = settings.audioSourceMode == com.deepvoiceguard.app.storage.AudioSourceMode.MIC,
+                        onClick = {
+                            scope.launch { repository.setAudioSourceMode(com.deepvoiceguard.app.storage.AudioSourceMode.MIC) }
+                        },
+                    )
+                    Text("마이크 (실기기)")
+                    Spacer(modifier = Modifier.width(16.dp))
+                    androidx.compose.material3.RadioButton(
+                        selected = settings.audioSourceMode == com.deepvoiceguard.app.storage.AudioSourceMode.FILE,
+                        onClick = {
+                            scope.launch { repository.setAudioSourceMode(com.deepvoiceguard.app.storage.AudioSourceMode.FILE) }
+                        },
+                    )
+                    Text("파일 (디버그)")
+                }
+
+                if (settings.audioSourceMode == com.deepvoiceguard.app.storage.AudioSourceMode.FILE) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "재생할 WAV asset",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val demoAssets = listOf(
+                        "demo/demo_01.wav" to "#1 일상 통화 (예상 SAFE)",
+                        "demo/demo_02.wav" to "#2 TTS 일상 (예상 DANGER)",
+                        "demo/demo_03.wav" to "#3 실제 사람 피싱 (예상 WARNING)",
+                        "demo/demo_04.wav" to "#4 TTS 피싱 (예상 CRITICAL)",
+                        "demo/demo_05.wav" to "#5 은행 정상 (예상 SAFE)",
+                        "demo/demo_06.wav" to "#6 보험 사기 (예상 WARNING)",
+                    )
+                    demoAssets.forEach { (path, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = settings.debugFileAssetPath == path,
+                                onClick = {
+                                    scope.launch { repository.setDebugFileAssetPath(path) }
+                                },
+                            )
+                            Text(label, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "⚠ START 시 선택된 파일이 실시간 페이스로 재생되며 분석됩니다. 재생 종료 시 자동 STOP.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 

@@ -1,6 +1,7 @@
 package com.deepvoiceguard.app.di
 
 import android.content.Context
+import com.deepvoiceguard.app.audio.FileAudioSource
 import com.deepvoiceguard.app.audio.NarrowbandPreprocessor
 import com.deepvoiceguard.app.inference.CombinedThreatAggregator
 import com.deepvoiceguard.app.phishing.PhishingKeywordDetector
@@ -58,4 +59,9 @@ object AppModule {
     @Singleton
     fun provideNarrowbandPreprocessor(): NarrowbandPreprocessor =
         NarrowbandPreprocessor()
+
+    @Provides
+    @Singleton
+    fun provideFileAudioSource(@ApplicationContext context: Context): FileAudioSource =
+        FileAudioSource(context)
 }
