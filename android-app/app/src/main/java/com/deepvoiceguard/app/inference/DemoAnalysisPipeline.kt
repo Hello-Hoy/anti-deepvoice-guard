@@ -13,6 +13,9 @@ import java.nio.ByteOrder
  * 데모용 파일 분석 파이프라인.
  * AudioCaptureService와 완전히 독립적으로 동작한다.
  * 오디오 파일 → AASIST 추론 + 사전 전사본 → 피싱 탐지 → 통합 결과.
+ *
+ * Demo WAV asset은 tools/preprocess_demo_wav.py로 narrowband 전처리된 상태로 저장되므로
+ * 여기서는 별도 필터링 없이 직접 AASIST에 전달한다 (live mic 경로와 달리 runtime 필터 불필요).
  */
 class DemoAnalysisPipeline(
     private val context: Context,

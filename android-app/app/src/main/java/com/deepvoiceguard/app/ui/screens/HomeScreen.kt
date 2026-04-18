@@ -56,16 +56,9 @@ fun HomeScreen() {
     val context = LocalContext.current
     var service by remember { mutableStateOf<AudioCaptureService?>(null) }
 
-    // FILE mode badge 표시를 위한 settings 구독.
-    val settingsRepo = remember(context) { com.deepvoiceguard.app.storage.SettingsRepository(context) }
-    val settings by settingsRepo.settings.collectAsState(
-        initial = com.deepvoiceguard.app.storage.AppSettings(),
-    )
-
     // 서비스의 live StateFlow를 구독 — combinedResult가 monitoring surface의 canonical source.
     val isMonitoring by service?.isMonitoring?.collectAsState() ?: remember { mutableStateOf(false) }
     val latestResult by service?.latestResult?.collectAsState() ?: remember { mutableStateOf(null) }
-    val activeFileAssetPath by service?.activeFileAssetPath?.collectAsState() ?: remember { mutableStateOf<String?>(null) }
     val combinedResult by service?.combinedResult?.collectAsState()
         ?: remember { mutableStateOf(null) }
     val transcription by service?.transcription?.collectAsState()
@@ -139,38 +132,6 @@ fun HomeScreen() {
                     else MaterialTheme.colorScheme.outline,
         )
 
-        // **FILE mode 디버그 배지** — 서비스에서 실제 스트리밍 중인 파일 경로를 표시
-        // (Settings.debugFileAssetPath이 아닌 service.activeFileAssetPath를 구독하여
-        // 라이브 Settings 변경이 배지를 흔들지 않도록 한다).
-        val streamingAsset = activeFileAssetPath
-        if (isMonitoring && streamingAsset != null) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                ),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "🎬 FILE MODE",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = streamingAsset.substringAfterLast('/'),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                    )
-                }
-            }
-        }
-
         // 통화 모니터링 배너
         if (callSession != null) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -241,16 +202,12 @@ fun HomeScreen() {
         Button(
             onClick = {
                 if (!isMonitoring) {
-                    // FILE mode는 AudioRecord를 사용하지 않으므로 RECORD_AUDIO 불필요.
-                    val fileMode = settings.audioSourceMode ==
-                        com.deepvoiceguard.app.storage.AudioSourceMode.FILE
-
-                    // 런타임 권한 확인 (FILE 모드면 skip).
+                    // 런타임 권한 확인
                     val hasRecordAudio = ContextCompat.checkSelfPermission(
                         context, Manifest.permission.RECORD_AUDIO,
                     ) == PackageManager.PERMISSION_GRANTED
 
-                    if (fileMode || hasRecordAudio) {
+                    if (hasRecordAudio) {
                         permissionDenied = false
                         startMonitoring()
                     } else {
