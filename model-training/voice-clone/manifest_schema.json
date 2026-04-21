@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anti-deepvoice-guard.local/voice-clone/manifest.schema.json",
+  "title": "Voice Clone Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "speaker",
+    "samples",
+    "split"
+  ],
+  "properties": {
+    "speaker": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "default": "1.0"
+    },
+    "sample_rate_train": {
+      "type": "integer",
+      "default": 24000,
+      "minimum": 1
+    },
+    "sample_rate_eval": {
+      "type": "integer",
+      "default": 16000,
+      "minimum": 1
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "wav_path_24k",
+          "wav_path_16k",
+          "text",
+          "duration_sec",
+          "verified"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_]+$"
+          },
+          "wav_path_24k": {
+            "type": "string",
+            "minLength": 1
+          },
+          "wav_path_16k": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text_normalized": {
+            "type": "string"
+          },
+          "duration_sec": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "snr_db": {
+            "type": "number"
+          },
+          "whisper_text": {
+            "type": "string"
+          },
+          "whisper_match": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "train",
+        "eval"
+      ],
+      "properties": {
+        "train": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_]+$"
+          }
+        },
+        "eval": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_]+$"
+          }
+        }
+      }
+    },
+    "stats": {
+      "type": "object"
+    }
+  }
+}

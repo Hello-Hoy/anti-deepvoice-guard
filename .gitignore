@@ -1,8 +1,15 @@
 .venv/
+.venv-cloning/
 __pycache__/
 *.pdf
 .DS_Store
 model_server
+
+# Voice-clone 파이프라인 — 대용량 산출물 제외
+model-training/voice-clone/data/
+model-training/weights/voice-clone/
+test-samples/voice-clone-raw/
+test-samples/Demo/
 
 # Training data (too large for git)
 model-training/data/real/

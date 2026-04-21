@@ -1,0 +1,22 @@
+# 주 경로 공통
+librosa==0.10.2.post1
+soundfile==0.12.1
+webrtcvad==2.0.10
+pydub==0.25.1
+openai-whisper==20231117
+speechbrain==1.0.2
+torchaudio==2.2.2
+
+# Phase 0 + XTTS fallback
+TTS==0.22.0
+trainer==0.0.36
+
+# 품질 평가
+jiwer==3.0.5
+pedalboard==0.9.16
+# UTMOSv2는 pip 미배포 - scripts/install_utmosv2.sh 로 sarulab-speech/UTMOSv2 clone
+# DNSMOS는 onnxruntime + 공식 ONNX 모델 별도 다운로드
+onnxruntime==1.17.3
+
+# CosyVoice2 / GPT-SoVITS / Phase C 엔진은 별도 venv를 사용한다.
+# 따라서 이 파일에는 포함하지 않는다. 각 엔진 환경에서 repo commit SHA와 의존성을 별도 pin 한다.

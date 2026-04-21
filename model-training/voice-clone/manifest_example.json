@@ -1,0 +1,48 @@
+{
+  "speaker": "hyohee",
+  "version": "1.0",
+  "sample_rate_train": 24000,
+  "sample_rate_eval": 16000,
+  "samples": [
+    {
+      "id": "clip_0001",
+      "wav_path_24k": "wavs_24k/clip_0001.wav",
+      "wav_path_16k": "wavs_16k/clip_0001.wav",
+      "text": "안녕하세요 저는 테스트 화자입니다.",
+      "text_normalized": "안녕하세요 저는 테스트 화자입니다.",
+      "duration_sec": 4.2,
+      "snr_db": 31.7,
+      "whisper_text": "안녕하세요 저는 테스트 화자입니다.",
+      "whisper_match": 1.0,
+      "verified": true
+    },
+    {
+      "id": "clip_0002",
+      "wav_path_24k": "wavs_24k/clip_0002.wav",
+      "wav_path_16k": "wavs_16k/clip_0002.wav",
+      "text": "오늘 오후 세 시에 다시 전화드리겠습니다.",
+      "text_normalized": "오늘 오후 세 시에 다시 전화드리겠습니다.",
+      "duration_sec": 5.1,
+      "snr_db": 29.4,
+      "whisper_text": "오늘 오후 세 시에 다시 전화드리겠습니다.",
+      "whisper_match": 1.0,
+      "verified": true
+    }
+  ],
+  "split": {
+    "train": [
+      "clip_0001"
+    ],
+    "eval": [
+      "clip_0002"
+    ]
+  },
+  "stats": {
+    "total_segments": 2,
+    "total_duration_sec": 9.3,
+    "coverage_matrix": {
+      "coverage_percent": 100.0,
+      "missing": []
+    }
+  }
+}
