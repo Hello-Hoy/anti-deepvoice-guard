@@ -41,3 +41,7 @@ model-training/data/*.txt
 
 # Local gradle JVM config (machine-specific)
 android-app/gradle/gradle-daemon-jvm.properties
+
+# Transient pip freeze snapshots captured during voice-clone setup
+.pip_before_setup.txt
+.pip_after_setup.txt

@@ -70,9 +70,9 @@ def main() -> int:
         help="GPT-SoVITS version hint used before importing inference_webui",
     )
     parser.add_argument("--out", required=True, help="Output WAV path")
-    parser.add_argument("--top_k", type=int, default=15)
-    parser.add_argument("--top_p", type=float, default=1.0)
-    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top_k", type=int, default=5)
+    parser.add_argument("--top_p", type=float, default=0.7)
+    parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--speed", type=float, default=1.0)
     args = parser.parse_args()
 
@@ -93,7 +93,7 @@ def main() -> int:
         # Upstream's generator loads weights before touching UI update locals.
         pass
     change_gpt_weights(gpt_path=args.ckpt_s1)
-    if getattr(iw, "model_version", args.version) in {"v2Pro", "v2ProPlus"} and getattr(iw, "sv_cn_model", None) is None:
+    if getattr(iw, "model_version", args.version) in {"v2Pro", "v2ProPlus", "v4"} and getattr(iw, "sv_cn_model", None) is None:
         iw.init_sv_cn()
 
     def _map_to_dict_language_key(internal_code: str) -> str:

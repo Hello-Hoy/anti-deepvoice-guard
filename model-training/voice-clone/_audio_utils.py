@@ -116,6 +116,8 @@ def run_ffmpeg(args: list[str], timeout: int = 180) -> subprocess.CompletedProce
         [binary, "-y", "-loglevel", "error", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         check=False,
     )

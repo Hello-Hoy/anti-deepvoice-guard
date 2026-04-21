@@ -20,11 +20,19 @@ def _repo_root() -> Path:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase B GPT-SoVITS retrain")
     parser.add_argument("--speaker", default="hyohee")
-    parser.add_argument("--version", default="v2ProPlus")
-    parser.add_argument("--min-snr", type=float, default=25.0)
-    parser.add_argument("--s1-epochs", type=int, default=40)
-    parser.add_argument("--s2-epochs", type=int, default=20)
-    parser.add_argument("--batch-size", type=int, default=8)
+    # Default to v4 per voice-clone-nifty-dawn plan; v2ProPlus available via --version.
+    parser.add_argument("--version", default="v4")
+    parser.add_argument("--min-snr", type=float, default=35.0)
+    # Conservative epoch bracket (plan: avoid v2ProPlus e40 overfit). Save every
+    # 2 epochs so bracket eval (_bracket_eval.py / _s2_bracket_eval.py) can pick
+    # the best checkpoint from {e2, e4, e6, e8, e10, e12}.
+    parser.add_argument("--s1-epochs", type=int, default=12)
+    parser.add_argument("--s2-epochs", type=int, default=8)
+    # Default batch=4 + grad accum 2 (effective batch 8) — dry-run showed peak
+    # VRAM estimate 16GB at batch=8 on RTX 4080 Super 16GB, right at the limit.
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--dry-run", action="store_true", help="Estimate VRAM, run health/smoke checks, then exit.")
+    parser.add_argument("--save-every-epoch", type=int, default=None, help="Checkpoint cadence; defaults to engine behavior.")
     parser.add_argument("--profile", choices=("quality", "fast"), default="quality")
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--ckpt-out", type=Path, default=None)
@@ -67,6 +75,14 @@ def _set_default_env(root: Path, version: str) -> None:
     os.environ["GPT_SOVITS_VERSION"] = version
 
 
+def _estimate_peak_vram_gb(version: str, batch_size: int, s1_epochs: int, s2_epochs: int) -> float:
+    base = 7.5 if version in {"v2Pro", "v2ProPlus"} else 6.0
+    if version == "v4":
+        base = 9.0
+    epoch_factor = 0.15 * min(max(s1_epochs, s2_epochs), 12)
+    return round(base + (0.65 * batch_size) + epoch_factor, 2)
+
+
 def main() -> int:
     args = _parse_args()
     root = _repo_root()
@@ -81,15 +97,15 @@ def main() -> int:
         root / "model-training" / "voice-clone" / "data" / f"user-{args.speaker}" / "gpt_sovits_prepared",
     )
 
-    archived = _archive_previous(ckpt_out)
-    ckpt_out.mkdir(parents=True, exist_ok=True)
-    data_dir.mkdir(parents=True, exist_ok=True)
-
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     _set_default_env(root, args.version)
 
-    from model_training.voice_clone.engines.gpt_sovits import GPTSoVITSEngine
+    from model_training.voice_clone.engines.gpt_sovits import GPTSoVITSEngine, _PRETRAINED_BY_VERSION
+
+    if args.version not in _PRETRAINED_BY_VERSION:
+        supported = ", ".join(sorted(_PRETRAINED_BY_VERSION))
+        raise SystemExit(f"Unsupported --version {args.version!r}. Supported versions: {supported}")
 
     engine = GPTSoVITSEngine()
     prepare_sig = inspect.signature(engine.prepare_data)
@@ -105,6 +121,27 @@ def main() -> int:
         s1_epochs = max(1, s1_epochs // 2)
         s2_epochs = max(1, s2_epochs // 2)
 
+    if args.dry_run:
+        ok, message = engine.health_check()
+        peak = _estimate_peak_vram_gb(args.version, args.batch_size, s1_epochs, s2_epochs)
+        print("Phase B dry-run")
+        print("===============")
+        print(f"speaker: {args.speaker}")
+        print(f"version: {args.version}")
+        print(f"manifest: {manifest}")
+        print(f"batch_size: {args.batch_size}")
+        print(f"s1_epochs: {s1_epochs}")
+        print(f"s2_epochs: {s2_epochs}")
+        print(f"estimated_peak_vram_gb: {peak:.2f}")
+        print("recommendation: batch=4 + grad accumulation 2 if estimate exceeds 14GB")
+        print(f"health_check: {'OK' if ok else 'NOT_READY'}")
+        print(message)
+        return 0
+
+    archived = _archive_previous(ckpt_out)
+    ckpt_out.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
     started = perf_counter()
     prepared = engine.prepare_data(manifest, data_dir, min_snr_db=args.min_snr)
     trained = engine.train(
@@ -113,6 +150,7 @@ def main() -> int:
         s1_epochs=s1_epochs,
         s2_epochs=s2_epochs,
         batch_size=args.batch_size,
+        **({"save_every_epoch": args.save_every_epoch} if args.save_every_epoch is not None else {}),
     )
     duration_sec = perf_counter() - started
 

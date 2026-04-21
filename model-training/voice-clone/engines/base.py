@@ -79,6 +79,8 @@ def run_in_venv(
         raise FileNotFoundError(f"Script not found: {script}")
 
     merged_env = os.environ.copy()
+    merged_env.setdefault("PYTHONUTF8", "1")
+    merged_env.setdefault("PYTHONIOENCODING", "utf-8")
     if env:
         merged_env.update(env)
     try:
@@ -86,6 +88,8 @@ def run_in_venv(
             [str(venv_python), str(script), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             env=merged_env,
             timeout=timeout,

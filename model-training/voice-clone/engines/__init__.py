@@ -11,6 +11,7 @@ _ENGINE_MODULES: dict[str, str] = {
     "xtts": "model_training.voice_clone.engines.xtts",
     "cosyvoice2": "model_training.voice_clone.engines.cosyvoice2",
     "gpt_sovits": "model_training.voice_clone.engines.gpt_sovits",
+    "openvoice2": "model_training.voice_clone.engines.openvoice2",
     "qwen3_tts": "model_training.voice_clone.engines.qwen3_tts",
     "indextts2": "model_training.voice_clone.engines.indextts2",
     "styletts2": "model_training.voice_clone.engines.styletts2",

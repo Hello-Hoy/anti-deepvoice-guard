@@ -28,7 +28,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 try:
     import yaml  # type: ignore
@@ -73,6 +73,19 @@ _PRETRAINED_V2PROPLUS = {
     "bigvgan": "models--nvidia--bigvgan_v2_24khz_100band_256x",
 }
 
+_PRETRAINED_V4 = {
+    **_PRETRAINED_V2PROPLUS,
+    # Verified against HF lj1995/GPT-SoVITS (tag 20250422v4): only s2G and a
+    # standalone vocoder.pth are shipped under gsv-v4-pretrained/. There is no
+    # v4-specific s2D (fine-tune inherits v2ProPlus s2D) and no v4 s2 config
+    # (the shared configs/s2.json is used; s2_config["model"]["version"] is
+    # overwritten programmatically in prepare_s2_config).
+    "s2G": "gsv-v4-pretrained/s2Gv4.pth",
+    "s2_config": "configs/s2.json",
+    "vocoder": "gsv-v4-pretrained/vocoder.pth",
+    "output_sample_rate": 48000,
+}
+
 _PRETRAINED_V1 = {
     **_PRETRAINED_V2,
     "s2G": "s2G488k.pth",
@@ -86,7 +99,12 @@ _PRETRAINED_BY_VERSION = {
     "v2": _PRETRAINED_V2,
     "v2Pro": _PRETRAINED_V2PRO,
     "v2ProPlus": _PRETRAINED_V2PROPLUS,
+    "v4": _PRETRAINED_V4,
 }
+
+
+class UnsupportedGPTSoVITSVersionError(ValueError):
+    """Raised when GPT_SOVITS_VERSION is not explicitly supported."""
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -101,7 +119,12 @@ def _gpt_sovits_paths() -> dict[str, Any]:
         "GPT_SOVITS_PRETRAINED_DIR",
         repo_dir / "GPT_SoVITS" / "pretrained_models",
     )
-    defaults = _PRETRAINED_BY_VERSION.get(version, _PRETRAINED_V2)
+    defaults = _PRETRAINED_BY_VERSION.get(version)
+    if defaults is None:
+        supported = ", ".join(sorted(_PRETRAINED_BY_VERSION))
+        raise UnsupportedGPTSoVITSVersionError(
+            f"Unsupported GPT-SoVITS version '{version}'. Supported versions: {supported}"
+        )
 
     gpt_sovits_pkg = repo_dir / "GPT_SoVITS"
     return {
@@ -111,6 +134,7 @@ def _gpt_sovits_paths() -> dict[str, Any]:
             repo_dir / ".venv-gpt-sovits" / "Scripts" / "python.exe",
         ),
         "version": version,
+        "output_sample_rate": int(defaults.get("output_sample_rate", 32000)),
         "commit": os.getenv("GPT_SOVITS_COMMIT", ""),
         "pretrained_root": pretrained_root,
         "bert_dir": _env_path(
@@ -141,6 +165,11 @@ def _gpt_sovits_paths() -> dict[str, Any]:
         "bigvgan_dir": (
             _env_path("GPT_SOVITS_BIGVGAN_DIR", pretrained_root / defaults["bigvgan"])
             if "bigvgan" in defaults
+            else None
+        ),
+        "vocoder": (
+            _env_path("GPT_SOVITS_VOCODER", pretrained_root / defaults["vocoder"])
+            if "vocoder" in defaults
             else None
         ),
         "s2_config_template": _env_path(
@@ -231,6 +260,8 @@ def _probe_torch_runtime(venv_python: Path) -> dict[str, Any]:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     if probe.returncode != 0:
@@ -281,6 +312,8 @@ def _stream_subprocess(
             cwd=str(cwd),
             timeout=timeout,
             check=False,
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(
@@ -338,7 +371,7 @@ class GPTSoVITSEngine(VoiceCloneEngine):
 
         version_probe = subprocess.run(
             [str(venv_python), "--version"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         if version_probe.returncode != 0:
             return (
@@ -353,7 +386,7 @@ class GPTSoVITSEngine(VoiceCloneEngine):
             "s2_config_template", "s1_config_template",
             "inference_runner",
         ]
-        if paths["version"] in {"v2Pro", "v2ProPlus"}:
+        if paths["version"] in {"v2Pro", "v2ProPlus", "v4"}:
             script_keys.append("script_1sv")
         missing_scripts = [k for k in script_keys if not Path(paths[k]).exists()]
         if missing_scripts:
@@ -369,14 +402,18 @@ class GPTSoVITSEngine(VoiceCloneEngine):
                 f"pretrained_models.zip 을 {paths['pretrained_root']} 에 풀어두세요. {install_hint}"
             )
 
-        if paths["version"] in {"v2Pro", "v2ProPlus"}:
+        if paths["version"] in {"v2Pro", "v2ProPlus", "v4"}:
             sv_ckpt: Optional[Path] = paths["sv_ckpt"]
             if sv_ckpt is None or not sv_ckpt.is_file():
                 return False, f"GPT-SoVITS SV ckpt missing: {sv_ckpt}. {install_hint}"
-        if paths["version"] == "v2ProPlus":
+        if paths["version"] in {"v2ProPlus", "v4"}:
             bigvgan_dir: Optional[Path] = paths["bigvgan_dir"]
             if bigvgan_dir is None or not bigvgan_dir.is_dir():
                 return False, f"GPT-SoVITS BigVGAN dir missing: {bigvgan_dir}. {install_hint}"
+        if paths["version"] == "v4":
+            vocoder_ckpt: Optional[Path] = paths["vocoder"]
+            if vocoder_ckpt is None or not vocoder_ckpt.is_file():
+                return False, f"GPT-SoVITS v4 vocoder ckpt missing: {vocoder_ckpt}. {install_hint}"
 
         probe = _probe_torch_runtime(venv_python)
         if not probe.get("torch_import"):
@@ -462,6 +499,41 @@ class GPTSoVITSEngine(VoiceCloneEngine):
                     "speaker": speaker,
                     "train_sample_rate": self.train_sample_rate,
                     "refs": ref_map,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        ref_candidates: list[dict[str, Any]] = []
+        for sample in split_samples(manifest, "train"):
+            try:
+                duration_sec = float(sample.get("duration_sec", 0.0))
+                snr_db = float(sample.get("snr_db", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if not (6.0 <= duration_sec <= 10.0):
+                continue
+            sample_id = str(sample["id"])
+            ref_candidates.append(
+                {
+                    "id": sample_id,
+                    "wav": str((raw_dir / f"{sample_id}.wav").resolve()),
+                    "text": str(sample.get("text") or ""),
+                    "duration_sec": duration_sec,
+                    "snr_db": snr_db,
+                    "style": str(sample.get("style") or sample.get("metadata", {}).get("style") or ""),
+                }
+            )
+        ref_candidates.sort(key=lambda item: float(item["snr_db"]), reverse=True)
+        (out_dir / "ref_selection.json").write_text(
+            json.dumps(
+                {
+                    "speaker": speaker,
+                    "strategy": "train split, SNR top-8, 6-10 second clips",
+                    "rotate_index": 0,
+                    "refs": ref_candidates[:8],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -601,7 +673,7 @@ class GPTSoVITSEngine(VoiceCloneEngine):
 
         # 1C — semantic token extraction.
         # 1SV - speaker verification embeddings for v2Pro/v2ProPlus.
-        if version in {"v2Pro", "v2ProPlus"}:
+        if version in {"v2Pro", "v2ProPlus", "v4"}:
             self._run_prep_stage(
                 stage="1sv",
                 venv_python=venv_python,
@@ -667,12 +739,14 @@ class GPTSoVITSEngine(VoiceCloneEngine):
         s2_config["train"]["gpu_numbers"] = gpu_numbers
         s2_config["train"]["grad_ckpt"] = if_grad_ckpt
         s2_config["train"]["lora_rank"] = lora_rank
-        if version in {"v2Pro", "v2ProPlus"}:
+        if version in {"v2Pro", "v2ProPlus", "v4"}:
             # Upstream s2v2Pro*.json currently carries no train key for SV.
             if "sv_path" in s2_config["train"]:
                 s2_config["train"]["sv_path"] = str(paths["sv_ckpt"])
-        if version == "v2ProPlus":
-            # Upstream s2v2ProPlus.json currently carries no train key for BigVGAN.
+        if version in {"v2ProPlus", "v4"}:
+            # v4 uses the shared configs/s2.json template (no per-version
+            # config file exists upstream at tag 20250422v4). If the template
+            # gains a BigVGAN path key, wire it through here.
             if "bigvgan_dir" in s2_config["train"]:
                 s2_config["train"]["bigvgan_dir"] = str(paths["bigvgan_dir"])
         s2_config["model"]["version"] = version
@@ -787,6 +861,9 @@ class GPTSoVITSEngine(VoiceCloneEngine):
         ref_text_map = data_dir / "ref_text_map.json"
         if ref_text_map.exists():
             _copy_or_raise(ref_text_map, ckpt_out / "ref_text_map.json")
+        ref_selection = data_dir / "ref_selection.json"
+        if ref_selection.exists():
+            _copy_or_raise(ref_selection, ckpt_out / "ref_selection.json")
 
         return ckpt_out
 
@@ -832,6 +909,8 @@ class GPTSoVITSEngine(VoiceCloneEngine):
         text: str,
         ckpt: Path | None = None,
         ref_wav: Path | None = None,
+        ref_wav_idx: int | None = None,
+        ref_mode: Literal["rotate", "best"] = "rotate",
         language: str = "ko",
         out_path: Path = Path("out.wav"),
         sample_rate: int | None = None,
@@ -841,8 +920,6 @@ class GPTSoVITSEngine(VoiceCloneEngine):
             raise RuntimeError(f"GPT-SoVITS 추론 준비 실패: {message}")
         if ckpt is None:
             raise ValueError("GPT-SoVITS 추론은 학습된 체크포인트 디렉토리 또는 파일이 필요합니다.")
-        if ref_wav is None:
-            raise ValueError("GPT-SoVITS 추론은 ref_wav가 필요합니다.")
         if language not in self.supports_language:
             raise ValueError(
                 f"지원하지 않는 language='{language}'. supported={', '.join(self.supports_language)}"
@@ -860,7 +937,11 @@ class GPTSoVITSEngine(VoiceCloneEngine):
         if not s2_ckpt.exists() or not s1_ckpt.exists():
             raise FileNotFoundError(f"ckpt_dir 내 s2G.pth / s1bert.pth 없음: {ckpt_dir}")
 
-        resolved_ref_wav = ref_wav.expanduser().resolve()
+        resolved_ref_wav = (
+            ref_wav.expanduser().resolve()
+            if ref_wav is not None
+            else self._select_ref_wav(ckpt_dir, text, ref_mode=ref_mode, ref_wav_idx=ref_wav_idx)
+        )
         ref_text = ""
         ref_text_map_path = ckpt_dir / "ref_text_map.json"
         if ref_text_map_path.exists():
@@ -873,7 +954,7 @@ class GPTSoVITSEngine(VoiceCloneEngine):
 
         out_path = out_path.expanduser().resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        target_sample_rate = sample_rate or self.train_sample_rate
+        target_sample_rate = sample_rate or int(paths.get("output_sample_rate") or self.train_sample_rate)
         temp_out = (
             out_path
             if target_sample_rate == self.train_sample_rate
@@ -888,6 +969,10 @@ class GPTSoVITSEngine(VoiceCloneEngine):
             "--text", text,
             "--language", language,
             "--out", str(temp_out),
+            "--version", version,
+            "--top_k", "5",
+            "--top_p", "0.7",
+            "--temperature", "0.6",
         ]
         if ref_text:
             runner_args.extend(["--ref_text", ref_text])
@@ -921,3 +1006,52 @@ class GPTSoVITSEngine(VoiceCloneEngine):
                 )
             temp_out.unlink(missing_ok=True)
         return out_path
+
+    @staticmethod
+    def _select_ref_wav(
+        ckpt_dir: Path,
+        text: str,
+        *,
+        ref_mode: Literal["rotate", "best"],
+        ref_wav_idx: int | None,
+    ) -> Path:
+        selection_path = ckpt_dir / "ref_selection.json"
+        if not selection_path.exists():
+            raise ValueError(
+                "GPT-SoVITS synthesize needs ref_wav or ref_selection.json from prepare_data()."
+            )
+        payload = json.loads(selection_path.read_text(encoding="utf-8"))
+        refs = payload.get("refs", [])
+        if not refs:
+            raise ValueError(f"No references in {selection_path}")
+        if ref_wav_idx is not None:
+            chosen = refs[int(ref_wav_idx) % len(refs)]
+        elif ref_mode == "rotate":
+            # Round-robin over train-split SNR top-8 6-10s clips. Persist the
+            # cursor so one-clip CLI calls still rotate across a batch.
+            index = int(payload.get("rotate_index", 0)) % len(refs)
+            chosen = refs[index]
+            payload["rotate_index"] = index + 1
+            selection_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        elif ref_mode == "best":
+            # Heuristic match: similar reference text length and optional style
+            # tag, with SNR as the tie-breaker.
+            target_len = len(text)
+
+            def score(ref: dict[str, Any]) -> tuple[float, float]:
+                length_penalty = abs(len(str(ref.get("text", ""))) - target_len)
+                style = str(ref.get("style") or "")
+                style_bonus = -15.0 if style and style in text else 0.0
+                snr = float(ref.get("snr_db", 0.0))
+                return (length_penalty + style_bonus - 0.05 * snr, -snr)
+
+            chosen = min(refs, key=score)
+        else:
+            raise ValueError("ref_mode must be 'rotate' or 'best'")
+        wav = Path(str(chosen["wav"])).expanduser().resolve()
+        if not wav.exists():
+            raise FileNotFoundError(f"Selected reference WAV does not exist: {wav}")
+        return wav

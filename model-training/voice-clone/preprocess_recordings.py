@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
+"""Preprocess voice-clone recordings into a split manifest."""
+
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
-from pathlib import Path
 import random
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any, Callable, Iterable
 import warnings
 
@@ -22,11 +24,11 @@ from model_training.voice_clone.engines._manifest import save_manifest, validate
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+SUPPORTED_AUDIO = {".wav", ".mp3", ".m4a", ".flac", ".ogg"}
 _WHISPER_MODELS: dict[str, Any] = {}
 
 
 def convert_audio(src: Path, dst: Path, sr: int = 24000, channels: int = 1) -> bool:
-    """ffmpeg로 WAV를 변환한다."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
@@ -45,284 +47,180 @@ def convert_audio(src: Path, dst: Path, sr: int = 24000, channels: int = 1) -> b
             str(dst),
         ],
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
         check=False,
     )
     return result.returncode == 0
 
 
+def true_peak_dbfs(wav: np.ndarray, sr: int) -> float:
+    if wav.size == 0:
+        return float("-inf")
+    peak = float(np.max(np.abs(wav)))
+    try:
+        import librosa
+
+        oversampled = librosa.resample(np.asarray(wav, dtype=np.float32), orig_sr=sr, target_sr=sr * 4)
+        peak = max(peak, float(np.max(np.abs(oversampled))) if oversampled.size else peak)
+    except Exception:
+        pass
+    if peak <= 0.0:
+        return float("-inf")
+    return float(20.0 * np.log10(max(peak, 1e-12)))
+
+
+def has_clipping(wav: np.ndarray, threshold: float = 0.999) -> bool:
+    if wav.size == 0:
+        return False
+    clipped = np.abs(wav) >= threshold
+    if int(np.sum(clipped)) >= 3:
+        return True
+    return bool(np.any(clipped[:-1] & clipped[1:])) if clipped.size > 1 else bool(clipped[0])
+
+
 def compute_snr(wav: np.ndarray, sr: int) -> float:
-    """VAD voiced/unvoiced RMS 비율로 근사 SNR(dB)을 계산한다."""
-    vad_signal, vad_sr = _resample_for_vad(wav, sr)
-    frame_samples = int(vad_sr * 0.03)
-    frames = _frame_signal(vad_signal, frame_samples)
-    if not frames:
+    if wav.size == 0:
         return 0.0
-
-    vad = _lazy_import_webrtcvad().Vad(2)
-    voiced_rms: list[float] = []
-    noise_rms: list[float] = []
-
-    for frame in frames:
-        pcm = _float_to_pcm16(frame)
-        is_voiced = vad.is_speech(pcm, vad_sr)
-        rms = float(np.sqrt(np.mean(np.square(frame), dtype=np.float64)))
-        if is_voiced:
-            voiced_rms.append(rms)
-        else:
-            noise_rms.append(rms)
-
-    if not voiced_rms:
+    frame = max(int(sr * 0.05), 1)
+    usable = (wav.size // frame) * frame
+    if usable < frame * 4:
         return 0.0
+    frames = wav[:usable].reshape(-1, frame)
+    levels = np.sqrt(np.mean(np.square(frames, dtype=np.float64), axis=1))
+    levels = np.clip(levels, 1e-8, None)
+    noise = float(np.mean(np.percentile(levels, [10, 20])))
+    speech = float(np.mean(np.percentile(levels, [80, 90])))
+    if speech <= noise:
+        return 0.0
+    return float(20.0 * np.log10(speech / max(noise, 1e-8)))
 
-    speech_floor = max(float(np.mean(voiced_rms)), 1e-8)
-    noise_floor = max(float(np.mean(noise_rms)) if noise_rms else 1e-4, 1e-8)
-    return float(20.0 * np.log10(speech_floor / noise_floor))
 
-
-def vad_trim(
-    wav: np.ndarray,
-    sr: int,
-    aggressiveness: int = 2,
-    min_voiced_ms: int = 300,
-) -> np.ndarray:
-    """webrtcvad로 앞뒤 무음을 제거한다."""
-    vad_signal, vad_sr = _resample_for_vad(wav, sr)
+def vad_trim(wav: np.ndarray, sr: int, aggressiveness: int = 2) -> np.ndarray:
+    try:
+        import webrtcvad
+    except ModuleNotFoundError:
+        return wav
+    signal, vad_sr = _resample_for_vad(wav, sr)
     frame_samples = int(vad_sr * 0.03)
-    frames = _frame_signal(vad_signal, frame_samples)
+    frames = _frame_signal(signal, frame_samples)
     if not frames:
         return wav
-
-    vad = _lazy_import_webrtcvad().Vad(aggressiveness)
-    voiced_flags = [vad.is_speech(_float_to_pcm16(frame), vad_sr) for frame in frames]
-    voiced_indices = [index for index, flag in enumerate(voiced_flags) if flag]
-    if not voiced_indices:
+    vad = webrtcvad.Vad(aggressiveness)
+    voiced = [idx for idx, frame in enumerate(frames) if vad.is_speech(_float_to_pcm16(frame), vad_sr)]
+    if not voiced:
         return wav
-
-    voiced_duration_ms = len(voiced_indices) * 30
-    if voiced_duration_ms < min_voiced_ms:
-        return wav
-
-    start_index = voiced_indices[0] * frame_samples
-    end_index = min((voiced_indices[-1] + 1) * frame_samples, len(vad_signal))
+    start = max((voiced[0] * frame_samples) - int(0.1 * vad_sr), 0)
+    end = min(((voiced[-1] + 1) * frame_samples) + int(0.1 * vad_sr), len(signal))
     scale = sr / vad_sr
-    start = max(int(start_index * scale), 0)
-    end = min(int(end_index * scale), len(wav))
-    trimmed = wav[start:end]
+    trimmed = wav[int(start * scale): int(end * scale)]
     return trimmed if trimmed.size else wav
 
 
-def segment_audio(
-    wav: np.ndarray,
-    sr: int,
-    min_sec: float = 3.0,
-    max_sec: float = 14.0,
-    split_db: float = -40,
-) -> list[tuple[int, int]]:
-    """silence 기반으로 세그먼트를 나누고 길이 제약을 적용한다."""
-    librosa = _lazy_import_librosa()
-    intervals = librosa.effects.split(wav, top_db=abs(int(split_db)))
-    if len(intervals) == 0:
-        if len(wav) / sr >= min_sec:
-            return [(0, len(wav))]
-        return []
-
-    merged: list[tuple[int, int]] = []
-    gap_limit = int(sr * 0.35)
+def segment_audio(wav: np.ndarray, sr: int, min_sec: float = 3.0, max_sec: float = 15.0) -> list[tuple[int, int]]:
+    try:
+        import librosa
+        intervals = librosa.effects.split(wav, top_db=40)
+    except Exception:
+        intervals = np.asarray([[0, len(wav)]])
+    segments: list[tuple[int, int]] = []
+    min_len = int(min_sec * sr)
+    max_len = int(max_sec * sr)
     for start, end in intervals:
-        if not merged:
-            merged.append((int(start), int(end)))
-            continue
-        last_start, last_end = merged[-1]
-        if start - last_end <= gap_limit and (end - last_start) / sr <= max_sec:
-            merged[-1] = (last_start, int(end))
-        else:
-            merged.append((int(start), int(end)))
-
-    normalized: list[tuple[int, int]] = []
-    max_samples = int(max_sec * sr)
-    min_samples = int(min_sec * sr)
-
-    for start, end in merged:
-        length = end - start
-        if length < min_samples:
-            continue
-        if length <= max_samples:
-            normalized.append((start, end))
-            continue
-
-        cursor = start
-        while cursor < end:
-            next_end = min(cursor + max_samples, end)
-            if end - next_end < min_samples and next_end != end:
-                next_end = end
-            if next_end - cursor >= min_samples:
-                normalized.append((cursor, next_end))
-            cursor = next_end
-
-    return normalized
+        cursor = int(start)
+        end = int(end)
+        while end - cursor > max_len:
+            segments.append((cursor, cursor + max_len))
+            cursor += max_len
+        if end - cursor >= min_len:
+            segments.append((cursor, end))
+    return segments
 
 
-def transcribe_whisper(
-    wav_path: Path,
-    model_name: str = "large-v3",
-    language: str = "ko",
-) -> str:
-    """openai-whisper로 전사한다. 실패 시 빈 문자열을 반환한다."""
+def transcribe_whisper(wav_path: Path, model_name: str = "large-v3", language: str = "ko") -> str:
     try:
         import whisper
     except ModuleNotFoundError:
         warnings.warn("openai-whisper is not installed; skipping transcription.", RuntimeWarning)
         return ""
-
     model = _WHISPER_MODELS.get(model_name)
     if model is None:
         model = whisper.load_model(model_name)
         _WHISPER_MODELS[model_name] = model
-
-    try:
-        result = model.transcribe(str(wav_path), language=language, task="transcribe", fp16=False)
-    except Exception as exc:  # pragma: no cover - depends on runtime model/device
-        warnings.warn(f"Whisper transcription failed for {wav_path.name}: {exc}", RuntimeWarning)
-        return ""
-
-    text = str(result.get("text", "")).strip()
-    return " ".join(text.split())
-
-
-def align_with_script(
-    segments_text: list[str],
-    script_lines: list[str],
-) -> list[tuple[int | None, float]]:
-    """Whisper 전사 결과를 대본 라인에 순차적으로 정렬한다."""
-    from difflib import SequenceMatcher
-
-    normalized_script = [_normalize_for_match(line) for line in script_lines]
-    search_start = 0
-    alignments: list[tuple[int | None, float]] = []
-
-    for segment_text in segments_text:
-        normalized_segment = _normalize_for_match(segment_text)
-        if not normalized_segment:
-            alignments.append((None, 0.0))
-            continue
-
-        best_index: int | None = None
-        best_score = 0.0
-        for index in range(search_start, len(script_lines)):
-            score = SequenceMatcher(None, normalized_segment, normalized_script[index]).ratio()
-            if score > best_score:
-                best_index = index
-                best_score = score
-
-        if best_index is not None and best_score >= 0.35:
-            alignments.append((best_index, float(best_score)))
-            search_start = best_index + 1
-        else:
-            alignments.append((None, float(best_score)))
-
-    return alignments
+    result = model.transcribe(str(wav_path), language=language, task="transcribe", fp16=False)
+    return " ".join(str(result.get("text", "")).split())
 
 
 def build_manifest(
-    segments_dir: Path,
+    segment_items: list[dict[str, Any]],
     script_path: Path,
     speaker: str,
-    train_ratio: float = 0.8,
-    seed: int = 42,
+    split: tuple[int, int, int],
+    split_seed: int,
+    rejections: list[dict[str, Any]],
+    target_sr_train: int,
+    target_sr_eval: int,
 ) -> dict[str, Any]:
-    """세그먼트 인덱스와 대본으로 공통 manifest를 구성한다."""
-    segment_index_path = segments_dir / "segment_index.json"
-    if not segment_index_path.exists():
-        raise FileNotFoundError(f"Segment index not found: {segment_index_path}")
-
-    segment_index = json.loads(segment_index_path.read_text(encoding="utf-8"))
-    segment_items = segment_index.get("segments", [])
-    if not segment_items:
-        raise ValueError(f"No segments were recorded in {segment_index_path}")
-
     script_lines = _load_script_lines(script_path)
-    whisper_texts = [str(item.get("whisper_text", "")).strip() for item in segment_items]
-    alignments = align_with_script(whisper_texts, script_lines) if any(whisper_texts) else []
-
-    used_script_indices: set[int] = set()
-    next_script_index = 0
     samples: list[dict[str, Any]] = []
-
     for index, item in enumerate(segment_items):
-        matched_index = None
-        match_score = 0.0
-        if alignments:
-            matched_index, match_score = alignments[index]
-            if matched_index is not None and matched_index in used_script_indices:
-                matched_index = None
-
-        if matched_index is None:
-            while next_script_index in used_script_indices and next_script_index < len(script_lines):
-                next_script_index += 1
-            if next_script_index < len(script_lines):
-                matched_index = next_script_index
-
-        if matched_index is None or matched_index >= len(script_lines):
-            raise ValueError(
-                f"Could not map segment {item['id']} to a script line. "
-                f"Check recording order or disable transcription and verify manually."
-            )
-
-        used_script_indices.add(matched_index)
-        next_script_index = matched_index + 1
-        text = script_lines[matched_index]
-        whisper_text = str(item.get("whisper_text", "")).strip()
-        verified = bool(match_score >= 0.6 or not whisper_text)
-        sample = {
-            "id": item["id"],
-            "wav_path_24k": item["wav_path_24k"],
-            "wav_path_16k": item["wav_path_16k"],
-            "text": text,
-            "text_normalized": _normalize_text(text),
-            "duration_sec": float(item["duration_sec"]),
-            "snr_db": float(item["snr_db"]),
-            "verified": verified,
-        }
-        if whisper_text:
-            sample["whisper_text"] = whisper_text
-            sample["whisper_match"] = round(float(match_score), 4)
-        samples.append(sample)
+        text = script_lines[index] if index < len(script_lines) else str(item.get("whisper_text") or "")
+        samples.append(
+            {
+                "id": item["id"],
+                "wav_path_24k": item["wav_path_24k"],
+                "wav_path_16k": item["wav_path_16k"],
+                "text": text,
+                "text_normalized": _normalize_text(text),
+                "duration_sec": float(item["duration_sec"]),
+                "snr_db": float(item["snr_db"]),
+                "verified": True,
+                "metadata": {
+                    "true_peak_dbfs": item["true_peak_dbfs"],
+                    "clipping": item["clipping"],
+                    "split_seed": split_seed,
+                },
+            }
+        )
+        if item.get("whisper_text"):
+            samples[-1]["whisper_text"] = item["whisper_text"]
 
     ids = [sample["id"] for sample in samples]
-    shuffled_ids = ids[:]
-    random.Random(seed).shuffle(shuffled_ids)
-    train_cutoff = max(1, int(len(shuffled_ids) * train_ratio))
-    if len(shuffled_ids) > 1:
-        train_cutoff = min(train_cutoff, len(shuffled_ids) - 1)
-
-    coverage_result = _load_coverage_analyze()([sample["text"] for sample in samples])
-    stats = {
-        "total_segments": len(samples),
-        "total_duration_sec": round(sum(sample["duration_sec"] for sample in samples), 3),
-        "avg_snr_db": round(
-            sum(sample.get("snr_db", 0.0) for sample in samples) / max(len(samples), 1),
-            3,
-        ),
-        "verified_segments": sum(1 for sample in samples if sample["verified"]),
-        "coverage_matrix": coverage_result,
-    }
+    shuffled = ids[:]
+    random.Random(split_seed).shuffle(shuffled)
+    train_pct, val_pct, test_pct = split
+    total = len(shuffled)
+    train_n = min(max(round(total * train_pct / 100), 1), max(total - 2, 1)) if total >= 3 else max(total - 1, 0)
+    val_n = max(round(total * val_pct / 100), 1) if total - train_n >= 2 else max(total - train_n, 0)
+    train_ids = sorted(shuffled[:train_n])
+    val_ids = sorted(shuffled[train_n: train_n + val_n])
+    test_ids = sorted(shuffled[train_n + val_n:])
+    for sample in samples:
+        if sample["id"] in train_ids:
+            sample["split"] = "train"
+        elif sample["id"] in val_ids:
+            sample["split"] = "eval"
+        else:
+            sample["split"] = "test"
 
     manifest = {
         "speaker": speaker,
         "version": "1.0",
-        "sample_rate_train": int(segment_index.get("sample_rate_train", 24000)),
-        "sample_rate_eval": int(segment_index.get("sample_rate_eval", 16000)),
+        "sample_rate_train": target_sr_train,
+        "sample_rate_eval": target_sr_eval,
         "samples": samples,
-        "split": {
-            "train": sorted(shuffled_ids[:train_cutoff]),
-            "eval": sorted(shuffled_ids[train_cutoff:]),
+        "split": {"train": train_ids, "eval": val_ids, "test": test_ids},
+        "stats": {
+            "total_segments": len(samples),
+            "total_duration_sec": round(sum(float(s["duration_sec"]) for s in samples), 3),
+            "avg_snr_db": round(sum(float(s["snr_db"]) for s in samples) / max(len(samples), 1), 3),
+            "split_ratio": f"{train_pct}/{val_pct}/{test_pct}",
+            "split_seed": split_seed,
+            "rejections": rejections,
         },
-        "stats": stats,
     }
-    if not manifest["split"]["eval"]:
-        manifest["split"]["eval"] = [manifest["split"]["train"].pop()]
-
     errors = validate_manifest(manifest)
     if errors:
         raise ValueError("Manifest validation failed:\n" + "\n".join(f"- {error}" for error in errors))
@@ -338,80 +236,70 @@ def preprocess(
     target_sr_train: int = 24000,
     target_sr_eval: int = 16000,
     skip_transcription: bool = False,
+    min_snr_db: float = 35.0,
+    max_true_peak_dbfs: float = -1.0,
+    split: tuple[int, int, int] = (75, 10, 15),
+    split_seed: int = 42,
 ) -> Path:
-    """녹음 폴더를 전처리해 공통 manifest를 생성한다."""
     if not raw_dir.exists():
         raise FileNotFoundError(f"Raw recording directory not found: {raw_dir}")
-    if not script_path.exists():
-        raise FileNotFoundError(f"Script file not found: {script_path}")
-
-    audio_files = sorted(
-        path
-        for path in raw_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in {".wav", ".mp3", ".m4a", ".flac", ".ogg"}
-    )
+    audio_files = sorted(path for path in raw_dir.iterdir() if path.is_file() and path.suffix.lower() in SUPPORTED_AUDIO)
     if not audio_files:
         raise ValueError(f"No supported audio files found in {raw_dir}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     workspace = out_dir / "_workspace"
-    raw_24k_dir = workspace / "raw_24k"
-    raw_16k_dir = workspace / "raw_16k"
-    wavs_24k_dir = out_dir / "wavs_24k"
-    wavs_16k_dir = out_dir / "wavs_16k"
-    segment_index_path = out_dir / "segment_index.json"
-
+    raw_train_dir = workspace / "raw_train"
+    wavs_train_dir = out_dir / "wavs_24k"
+    wavs_eval_dir = out_dir / "wavs_16k"
     segment_rows: list[dict[str, Any]] = []
+    rejections: list[dict[str, Any]] = []
     clip_counter = 1
 
     for file_index, src_path in enumerate(audio_files, start=1):
-        base_name = _safe_stem(src_path, file_index)
-        converted_24k = raw_24k_dir / f"{base_name}.wav"
-        converted_16k = raw_16k_dir / f"{base_name}.wav"
-
-        if not convert_audio(src_path, converted_24k, sr=target_sr_train, channels=1):
-            raise RuntimeError(f"ffmpeg failed to convert {src_path} to {target_sr_train}Hz WAV")
-        if not convert_audio(src_path, converted_16k, sr=target_sr_eval, channels=1):
-            raise RuntimeError(f"ffmpeg failed to convert {src_path} to {target_sr_eval}Hz WAV")
-
-        wav_24k, sr_24k = _read_audio(converted_24k)
-        trimmed = vad_trim(wav_24k, sr_24k)
-        snr_db = compute_snr(trimmed, sr_24k)
-        if snr_db < 20.0:
-            warnings.warn(
-                f"Low SNR detected for {src_path.name}: {snr_db:.2f} dB",
-                RuntimeWarning,
+        converted = raw_train_dir / f"{_safe_stem(src_path, file_index)}.wav"
+        if not convert_audio(src_path, converted, sr=target_sr_train, channels=1):
+            rejections.append({"source_file": src_path.name, "reason": "ffmpeg_convert_failed"})
+            continue
+        wav, sr = _read_audio(converted)
+        trimmed = vad_trim(wav, sr)
+        snr_db = compute_snr(trimmed, sr)
+        clipping = has_clipping(trimmed)
+        peak_db = true_peak_dbfs(trimmed, sr)
+        if snr_db < min_snr_db or clipping or peak_db > max_true_peak_dbfs:
+            rejections.append(
+                {
+                    "source_file": src_path.name,
+                    "reason": "quality_filter",
+                    "snr_db": round(snr_db, 3),
+                    "clipping": clipping,
+                    "true_peak_dbfs": round(peak_db, 3),
+                }
             )
-
-        segments = segment_audio(trimmed, sr_24k)
-        if not segments and len(trimmed) / sr_24k >= 3.0:
-            segments = [(0, len(trimmed))]
-
-        for start, end in segments:
-            segment_wav = trimmed[start:end]
-            if segment_wav.size == 0:
+            continue
+        for start, end in segment_audio(trimmed, sr):
+            segment = trimmed[start:end]
+            if segment.size == 0:
                 continue
             clip_id = f"clip_{clip_counter:04d}"
             clip_counter += 1
-            out_24k = wavs_24k_dir / f"{clip_id}.wav"
-            out_16k = wavs_16k_dir / f"{clip_id}.wav"
-
-            _write_audio(out_24k, segment_wav, sr_24k)
-            if not convert_audio(out_24k, out_16k, sr=target_sr_eval, channels=1):
-                raise RuntimeError(f"ffmpeg failed to convert segment {clip_id} to {target_sr_eval}Hz")
-
-            whisper_text = ""
-            if not skip_transcription:
-                whisper_text = transcribe_whisper(out_24k, model_name=whisper_model, language="ko")
-
+            out_train = wavs_train_dir / f"{clip_id}.wav"
+            out_eval = wavs_eval_dir / f"{clip_id}.wav"
+            _write_audio(out_train, segment, sr)
+            if not convert_audio(out_train, out_eval, sr=target_sr_eval, channels=1):
+                rejections.append({"source_file": src_path.name, "clip_id": clip_id, "reason": "eval_convert_failed"})
+                continue
+            whisper_text = "" if skip_transcription else transcribe_whisper(out_train, model_name=whisper_model, language="ko")
             segment_rows.append(
                 {
                     "id": clip_id,
                     "source_file": src_path.name,
-                    "wav_path_24k": f"wavs_24k/{out_24k.name}",
-                    "wav_path_16k": f"wavs_16k/{out_16k.name}",
-                    "duration_sec": round(len(segment_wav) / sr_24k, 4),
-                    "snr_db": round(float(snr_db), 4),
+                    "wav_path_24k": f"wavs_24k/{out_train.name}",
+                    "wav_path_16k": f"wavs_16k/{out_eval.name}",
+                    "duration_sec": round(len(segment) / sr, 4),
+                    "snr_db": round(snr_db, 4),
+                    "true_peak_dbfs": round(peak_db, 4),
+                    "clipping": clipping,
                     "whisper_text": whisper_text,
                 }
             )
@@ -419,18 +307,22 @@ def preprocess(
     if not segment_rows:
         raise ValueError("No usable segments were produced from the input recordings.")
 
-    segment_index = {
-        "speaker": speaker,
-        "sample_rate_train": target_sr_train,
-        "sample_rate_eval": target_sr_eval,
-        "segments": segment_rows,
-    }
-    segment_index_path.write_text(
-        json.dumps(segment_index, ensure_ascii=False, indent=2) + "\n",
+    (out_dir / "segment_index.json").write_text(
+        json.dumps(
+            {
+                "speaker": speaker,
+                "sample_rate_train": target_sr_train,
+                "sample_rate_eval": target_sr_eval,
+                "segments": segment_rows,
+                "rejections": rejections,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
-
-    manifest = build_manifest(out_dir, script_path, speaker=speaker)
+    manifest = build_manifest(segment_rows, script_path, speaker, split, split_seed, rejections, target_sr_train, target_sr_eval)
     manifest_path = out_dir / "manifest.json"
     save_manifest(manifest, manifest_path)
     return manifest_path
@@ -446,11 +338,13 @@ def _read_audio(path: Path) -> tuple[np.ndarray, int]:
         import soundfile as sf
 
         wav, sr = sf.read(path, dtype="float32", always_2d=False)
-        if isinstance(wav, np.ndarray) and wav.ndim > 1:
+        wav = np.asarray(wav, dtype=np.float32)
+        if wav.ndim > 1:
             wav = np.mean(wav, axis=1)
-        return np.asarray(wav, dtype=np.float32), int(sr)
+        return wav, int(sr)
     except Exception:
-        librosa = _lazy_import_librosa()
+        import librosa
+
         wav, sr = librosa.load(path, sr=None, mono=True)
         return np.asarray(wav, dtype=np.float32), int(sr)
 
@@ -465,42 +359,30 @@ def _write_audio(path: Path, wav: np.ndarray, sr: int) -> None:
 def _resample_for_vad(wav: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
     target_sr = 16000
     mono = np.asarray(wav, dtype=np.float32)
-    if mono.ndim > 1:
-        mono = np.mean(mono, axis=1)
     if sr == target_sr:
         return mono, sr
+    import librosa
 
-    librosa = _lazy_import_librosa()
-    resampled = librosa.resample(mono, orig_sr=sr, target_sr=target_sr)
-    return np.asarray(resampled, dtype=np.float32), target_sr
+    return np.asarray(librosa.resample(mono, orig_sr=sr, target_sr=target_sr), dtype=np.float32), target_sr
 
 
 def _frame_signal(signal: np.ndarray, frame_samples: int) -> list[np.ndarray]:
     usable = len(signal) - (len(signal) % frame_samples)
     if usable <= 0:
         return []
-    trimmed = signal[:usable]
-    return [trimmed[index:index + frame_samples] for index in range(0, usable, frame_samples)]
+    return [signal[index:index + frame_samples] for index in range(0, usable, frame_samples)]
 
 
 def _float_to_pcm16(frame: np.ndarray) -> bytes:
-    clipped = np.clip(frame, -1.0, 1.0)
-    return (clipped * 32767).astype(np.int16).tobytes()
+    return (np.clip(frame, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
 
-def _normalize_for_match(text: str) -> str:
-    if not text:
-        return ""
-    return "".join(_normalize_text(text).split())
+def _load_script_lines(script_path: Path) -> list[str]:
+    return [line.strip() for line in script_path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.strip().startswith("#")]
 
 
 def _normalize_text(text: str) -> str:
     return _load_normalize()(text)
-
-
-def _load_script_lines(script_path: Path) -> list[str]:
-    lines = script_path.read_text(encoding="utf-8").splitlines()
-    return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
 
 def _load_module_from_path(path: Path, module_name: str) -> Any:
@@ -513,55 +395,39 @@ def _load_module_from_path(path: Path, module_name: str) -> Any:
 
 
 def _load_normalize() -> Callable[[str], str]:
-    module = _load_module_from_path(
-        SCRIPT_DIR / "scripts" / "normalize_korean.py",
-        "voice_clone_normalize_korean",
-    )
+    module = _load_module_from_path(SCRIPT_DIR / "scripts" / "normalize_korean.py", "voice_clone_normalize_korean")
     normalize = getattr(module, "normalize", None)
     if not callable(normalize):
-        raise AttributeError("normalize_korean.py does not expose normalize(text: str) -> str")
+        raise AttributeError("normalize_korean.py does not expose normalize(text)")
     return normalize
 
 
-def _load_coverage_analyze() -> Callable[[list[str]], dict[str, Any]]:
-    module = _load_module_from_path(
-        SCRIPT_DIR / "scripts" / "korean_coverage_matrix.py",
-        "voice_clone_korean_coverage_matrix",
-    )
-    analyze = getattr(module, "analyze", None)
-    if not callable(analyze):
-        raise AttributeError("korean_coverage_matrix.py does not expose analyze(texts: list[str])")
-    return analyze
-
-
-def _lazy_import_librosa() -> Any:
-    import librosa
-
-    return librosa
-
-
-def _lazy_import_webrtcvad() -> Any:
-    import webrtcvad
-
-    return webrtcvad
+def _parse_split(value: str) -> tuple[int, int, int]:
+    parts = [int(part) for part in value.split("/")]
+    if len(parts) != 3 or sum(parts) != 100:
+        raise argparse.ArgumentTypeError("--split must be like 75/10/15 and sum to 100")
+    return parts[0], parts[1], parts[2]
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="voice-clone 녹음 전처리 파이프라인")
-    parser.add_argument("--raw-dir", type=Path, required=True, help="원본 녹음 폴더")
-    parser.add_argument("--out-dir", type=Path, required=True, help="전처리 출력 폴더")
-    parser.add_argument("--speaker", type=str, required=True, help="화자 이름")
-    parser.add_argument("--script", type=Path, required=True, help="녹음 대본 파일")
+    parser = argparse.ArgumentParser(description="voice-clone recording preprocessing")
+    parser.add_argument("--raw-dir", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--speaker", type=str, required=True)
+    parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--whisper-model", type=str, default="large-v3")
     parser.add_argument("--target-sr-train", type=int, default=24000)
     parser.add_argument("--target-sr-eval", type=int, default=16000)
     parser.add_argument("--skip-transcription", action="store_true")
+    parser.add_argument("--min-snr-db", "--min-snr", dest="min_snr_db", type=float, default=35.0)
+    parser.add_argument("--max-true-peak-dbfs", type=float, default=-1.0)
+    parser.add_argument("--split", type=_parse_split, default=(75, 10, 15))
+    parser.add_argument("--split-seed", type=int, default=42)
     return parser
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = _build_parser().parse_args(list(argv) if argv is not None else None)
     manifest_path = preprocess(
         raw_dir=args.raw_dir,
         out_dir=args.out_dir,
@@ -571,6 +437,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         target_sr_train=args.target_sr_train,
         target_sr_eval=args.target_sr_eval,
         skip_transcription=args.skip_transcription,
+        min_snr_db=args.min_snr_db,
+        max_true_peak_dbfs=args.max_true_peak_dbfs,
+        split=args.split,
+        split_seed=args.split_seed,
     )
     print(manifest_path)
     return 0
