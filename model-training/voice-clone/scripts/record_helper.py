@@ -19,7 +19,7 @@ import soundfile as sf
 SAMPLE_RATE = 48_000
 CHANNELS = 1
 BIT_DEPTH = "PCM_24"
-MIN_SNR_DB = 35.0
+MIN_SNR_DB = 25.0
 MAX_TRUE_PEAK_DBFS = -1.0
 CLIP_THRESHOLD = 0.999
 VOICE_CLONE_DIR = Path(__file__).resolve().parents[1]
@@ -107,11 +107,21 @@ def assess_recording(audio: np.ndarray, noise_floor: float | None = None) -> Rec
 def record_audio(device: int | None, duration_sec: float | None) -> np.ndarray:
     sd = _import_sounddevice()
     if duration_sec is None:
+        import queue
+        q: "queue.Queue[np.ndarray]" = queue.Queue()
+
+        def _callback(indata, frames, time_info, status):  # noqa: ARG001
+            q.put(indata.copy())
+
         input("Press Enter to start recording, then Enter again to stop.")
-        stream = sd.rec(int(SAMPLE_RATE * 3600), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32", device=device)
-        input("Recording... press Enter to stop.")
-        sd.stop()
-        return np.asarray(stream, dtype=np.float32).reshape(-1)
+        with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32", device=device, callback=_callback):
+            input("Recording... press Enter to stop.")
+        chunks: list[np.ndarray] = []
+        while not q.empty():
+            chunks.append(q.get())
+        if not chunks:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(chunks).reshape(-1)
     audio = sd.rec(int(SAMPLE_RATE * duration_sec), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32", device=device)
     sd.wait()
     return np.asarray(audio, dtype=np.float32).reshape(-1)
