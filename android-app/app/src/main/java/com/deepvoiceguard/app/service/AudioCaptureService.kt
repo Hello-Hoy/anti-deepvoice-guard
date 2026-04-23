@@ -231,6 +231,7 @@ class AudioCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand action=${intent?.action}")
         when (intent?.action) {
             ACTION_START -> serviceScope.launch {
                 lifecycleMutex.withLock { startCaptureInternal(null) }
@@ -367,11 +368,11 @@ class AudioCaptureService : Service() {
             sttEngine = null,
             phishingDetector = null,
             combinedAggregator = combinedAggregator,
-            // 도메인 mismatch 보정: 라이브 마이크 입력을 narrowband로 전처리해 AASIST에 전달.
-            // settings.liveNarrowbandEnabled=false 시 null → 전처리 skip (디버그/A-B 비교용).
-            // NOTE: 다른 설정(threshold, sttEnabled 등)과 동일하게 capture 시작 시점 snapshot만 사용.
-            //       런타임 토글은 다음 START/STOP 사이클부터 반영됨.
-            narrowbandPreprocessor = if (settings.liveNarrowbandEnabled) narrowbandPreprocessor else null,
+            // **v4+ 모델은 raw PCM 입력으로 학습** — narrowband 전처리 적용 시 감지력 56%→7%로 하락.
+            // training/inference mismatch 확정. 항상 null 고정 (코드 정리 시 파이프라인에서 완전 제거 예정).
+            narrowbandPreprocessor = null,
+            // [DIAG] 첫 5개 세그먼트 PCM 덤프 디렉터리 — /sdcard/Android/data/<pkg>/files/segments_debug/
+            debugDumpDir = java.io.File(getExternalFilesDir(null), "segments_debug"),
         )
         pipeline = newPipeline
 
@@ -717,7 +718,8 @@ class AudioCaptureService : Service() {
             AudioFormat.ENCODING_PCM_16BIT,
         ).coerceAtLeast(BUFFER_SIZE_SAMPLES * 2)
 
-        // 통화 중: VOICE_COMMUNICATION (AEC 적용), 일반: MIC
+        // 통화 중: VOICE_COMMUNICATION (AEC 적용), 일반: MIC.
+        // VOICE_RECOGNITION 실험 결과 오히려 RMS가 10배 감소하여 AASIST 훈련 분포 이탈. 원복.
         val audioSource = if (callSession != null) {
             MediaRecorder.AudioSource.VOICE_COMMUNICATION
         } else {
@@ -731,9 +733,14 @@ class AudioCaptureService : Service() {
             AudioFormat.ENCODING_PCM_16BIT,
             bufferSize,
         )
+        Log.i(
+            TAG,
+            "AudioRecord init: source=$audioSource sampleRate=$SAMPLE_RATE bufferSize=$bufferSize state=${audioRecord?.state}"
+        )
 
         // AudioRecord 초기화 검증 — 실패 시 동기 cleanup으로 안전하게 롤백.
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord init FAILED — state != INITIALIZED")
             stopCaptureInternal()
             return
         }
@@ -741,6 +748,10 @@ class AudioCaptureService : Service() {
         // 이미 startCaptureInternal 진입 시 isRecording=true로 예약함.
         _isMonitoring.value = true
         audioRecord?.startRecording()
+        Log.i(
+            TAG,
+            "AudioRecord.startRecording() → recordingState=${audioRecord?.recordingState} (target=${AudioRecord.RECORDSTATE_RECORDING})"
+        )
         // **Recording state 검증 (H85)** — startRecording()이 return해도 실제로 RECORDING
         // 상태가 아닐 수 있음(audio policy contention 등). RECORDSTATE_RECORDING 확인 후에만
         // epoch/watermark를 bump하여 실패한 start가 이전 epoch를 invalidate하지 않게.

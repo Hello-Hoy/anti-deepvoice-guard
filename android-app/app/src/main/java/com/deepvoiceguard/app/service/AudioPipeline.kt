@@ -50,6 +50,9 @@ class AudioPipeline(
     // 주의: VAD와 ring buffer/audio snapshot은 **원본 PCM**을 그대로 쓴다 — 필터링된 신호는
     // 오직 inferenceEngine.detect 입력으로만 사용.
     private val narrowbandPreprocessor: com.deepvoiceguard.app.audio.NarrowbandPreprocessor? = null,
+    // [DIAG] null이 아니면 첫 5개 세그먼트의 원본+전처리본을 raw float32로 이 디렉터리에 저장.
+    // adb pull 로 가져와 Python AASIST 비교용.
+    private val debugDumpDir: java.io.File? = null,
 ) {
     companion object {
         private const val TAG = "AudioPipeline"
@@ -176,6 +179,9 @@ class AudioPipeline(
     // VAD에 512 단위로 공급 시 남는 tail samples 버퍼
     private var vadRemainder = FloatArray(0)
 
+    // [DIAG] 프레임 단위 RMS/VAD prob 로그 throttle 카운터. 진단 후 제거 예정.
+    private var vadLogCounter = 0
+
     init {
         vadEngine.listener = object : VadEngine.Listener {
             override fun onSpeechStart(timestampMs: Long) {
@@ -257,6 +263,16 @@ class AudioPipeline(
             val frame = combined.copyOfRange(offset, offset + 512)
             val prob = vadEngine.process(frame)
             _vadProbability.value = prob
+            // [DIAG] 16프레임마다(~512ms) RMS + prob + state 로그.
+            if (++vadLogCounter % 16 == 0) {
+                var sumSq = 0.0
+                for (v in frame) sumSq += v * v
+                val rms = kotlin.math.sqrt(sumSq / frame.size)
+                Log.d(
+                    TAG,
+                    "VAD frame: rms=${"%.4f".format(rms)} prob=${"%.3f".format(prob)} state=${vadEngine.currentState()}"
+                )
+            }
             offset += 512
         }
 
@@ -291,6 +307,31 @@ class AudioPipeline(
             val inferenceInput = narrowbandPreprocessor?.process(segment) ?: segment
             val result: DetectionResult = inferenceEngine.detect(inferenceInput)
             segmentsAnalyzed++
+            // [DIAG] 세그먼트별 fake score 분포 관찰용.
+            Log.d(
+                TAG,
+                "segment#$segmentsAnalyzed fakeScore=${"%.3f".format(result.fakeScore)} " +
+                        "samples=${segment.size} narrowband=${narrowbandPreprocessor != null} " +
+                        "latencyMs=${result.latencyMs}"
+            )
+            // [DIAG] 모든 세그먼트 덤프 (mobile-fake 데이터 수집 모드).
+            // 파일명에 timestamp + segmentsAnalyzed 포함 → 순차 정렬 / 중복 방지.
+            val dumpDir = debugDumpDir
+            if (dumpDir != null) {
+                runCatching {
+                    dumpDir.mkdirs()
+                    val ts = System.currentTimeMillis()
+                    val prefix = "seg_${ts}_${segmentsAnalyzed}"
+                    writeFloat32Raw(java.io.File(dumpDir, "${prefix}_raw.pcm"), segment)
+                    if (narrowbandPreprocessor != null) {
+                        writeFloat32Raw(
+                            java.io.File(dumpDir, "${prefix}_narrowband.pcm"),
+                            inferenceInput,
+                        )
+                    }
+                    Log.i(TAG, "dumped $prefix (fake=${"%.3f".format(result.fakeScore)})")
+                }.onFailure { Log.w(TAG, "debug dump failed", it) }
+            }
 
             val aggregated = aggregator.add(result)
             _latestResult.value = aggregated
@@ -770,6 +811,13 @@ class AudioPipeline(
         _latestResult.value = null
         _phishingResult.value = null
         _combinedResult.value = null
+    }
+
+    // [DIAG] 진단용: float32 little-endian raw PCM 저장. Python: np.fromfile(path, dtype='<f4')
+    private fun writeFloat32Raw(file: java.io.File, data: FloatArray) {
+        val bb = java.nio.ByteBuffer.allocate(data.size * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (v in data) bb.putFloat(v)
+        file.writeBytes(bb.array())
     }
 }
 

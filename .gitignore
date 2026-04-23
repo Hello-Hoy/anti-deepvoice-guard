@@ -14,14 +14,22 @@ test-samples/Demo/
 # Training data (too large for git)
 model-training/data/real/
 model-training/data/fake/
+model-training/data/real_extra_iphone/
+model-training/data/mobile_fake_capture/
 model-training/data/train.csv
 model-training/data/val.csv
+model-training/data/train_v*.csv
+model-training/data/val_v*.csv
+model-training/data/test_iphone_heldout.csv
+model-training/data/test_speaker_holdout.csv
+model-training/data/test_fake_regression.csv
 
 # Official pretrained weights (download separately)
 model-training/weights/official/*.pth
 
 # Training checkpoint weights (large, reproducible)
 model-training/weights/finetuned/*.pth
+model-training/weights/finetuned_v*/
 
 # Test audio samples (large files)
 test-samples/real/

@@ -237,6 +237,8 @@ def convert_to_onnx(model_path: str, output_path: str, config_path: str = None):
     dummy_input = torch.randn(1, 64600)
 
     print(f"Exporting to ONNX: {output_path}")
+    # **dynamo=False**: PyTorch 2.x의 torch.export 기반 dynamo path는 Android ORT 1.19.2
+    # 호환 안 되는 ops를 생성해 ORT_RUNTIME_EXCEPTION 유발. 레거시 TorchScript 기반 path로 강제.
     torch.onnx.export(
         inference_model,
         dummy_input,
@@ -245,6 +247,7 @@ def convert_to_onnx(model_path: str, output_path: str, config_path: str = None):
         input_names=["audio"],
         output_names=["probabilities"],
         dynamic_axes=None,  # 고정 배치 크기 (1)
+        dynamo=False,
     )
     print(f"ONNX model saved to {output_path}")
 

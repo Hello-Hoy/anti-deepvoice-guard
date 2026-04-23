@@ -16,7 +16,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 data class AppSettings(
     val useOnDevice: Boolean = true,
     val serverUrl: String = "http://192.168.0.100:8000",
-    val threshold: Float = 0.7f,
+    val threshold: Float = 0.9f,
     val autoStartOnCall: Boolean = true,
     val autoStartOnBoot: Boolean = false,
     // --- v3 STT/피싱 설정 ---
@@ -27,7 +27,7 @@ data class AppSettings(
     val hybridModeEnabled: Boolean = false,          // 하이브리드 서버 모드
     val dataConsentLevel: String = "none",           // "none", "metadata", "full"
     val demoMode: Boolean = false,                   // 데모 모드
-    val liveNarrowbandEnabled: Boolean = true,       // 라이브 마이크 narrowband 전처리 (도메인 mismatch 보정)
+    val liveNarrowbandEnabled: Boolean = false,      // v4+ 모델은 raw PCM 입력 기준 학습됐으므로 기본 비활성화. true로 켜면 narrowband 적용(레거시 호환).
 )
 
 class SettingsRepository(private val context: Context) {
@@ -52,7 +52,7 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             useOnDevice = prefs[Keys.USE_ON_DEVICE] ?: true,
             serverUrl = prefs[Keys.SERVER_URL] ?: "http://192.168.0.100:8000",
-            threshold = prefs[Keys.THRESHOLD] ?: 0.7f,
+            threshold = prefs[Keys.THRESHOLD] ?: 0.9f,
             autoStartOnCall = prefs[Keys.AUTO_START_ON_CALL] ?: true,
             autoStartOnBoot = prefs[Keys.AUTO_START_ON_BOOT] ?: false,
             sttEnabled = prefs[Keys.STT_ENABLED] ?: false,
@@ -62,7 +62,7 @@ class SettingsRepository(private val context: Context) {
             hybridModeEnabled = prefs[Keys.HYBRID_MODE_ENABLED] ?: false,
             dataConsentLevel = prefs[Keys.DATA_CONSENT_LEVEL] ?: "none",
             demoMode = prefs[Keys.DEMO_MODE] ?: false,
-            liveNarrowbandEnabled = prefs[Keys.LIVE_NARROWBAND_ENABLED] ?: true,
+            liveNarrowbandEnabled = prefs[Keys.LIVE_NARROWBAND_ENABLED] ?: false,
         )
     }
 

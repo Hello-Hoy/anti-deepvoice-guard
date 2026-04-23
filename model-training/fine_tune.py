@@ -86,15 +86,16 @@ class AudioDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.samples[idx]
-        import torchaudio
+        import soundfile as sf
 
-        waveform, sr = torchaudio.load(item["filepath"])
+        # torchaudio 2.11은 기본 backend가 torchcodec인데 설치가 까다로우므로 soundfile 직접 사용.
+        data, sr = sf.read(item["filepath"], dtype="float32", always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        waveform = torch.from_numpy(data)
         if sr != 16000:
-            waveform = torchaudio.functional.resample(waveform, sr, 16000)
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-
-        waveform = waveform.squeeze(0)  # (samples,)
+            import torchaudio.functional as F_audio
+            waveform = F_audio.resample(waveform, sr, 16000)
 
         # 볼륨 정규화 (조용한 TTS 대응 — 최대 10x gain)
         peak = waveform.abs().max()
@@ -103,9 +104,11 @@ class AudioDataset(Dataset):
             gain = min(target / peak, 10.0)
             waveform = waveform * gain
 
-        # Pad or crop
+        # Pad or crop — **repeat-pad** 로 통일 (Android OnDeviceEngine / server 와 일치).
+        # 기존 zero-pad는 training/inference 분포 mismatch를 발생시켰음.
         if waveform.shape[0] < self.nb_samp:
-            waveform = F.pad(waveform, (0, self.nb_samp - waveform.shape[0]))
+            n_repeat = (self.nb_samp // waveform.shape[0]) + 1
+            waveform = waveform.repeat(n_repeat)[: self.nb_samp]
         elif waveform.shape[0] > self.nb_samp:
             start = random.randint(0, waveform.shape[0] - self.nb_samp) if self.augment else 0
             waveform = waveform[start : start + self.nb_samp]
