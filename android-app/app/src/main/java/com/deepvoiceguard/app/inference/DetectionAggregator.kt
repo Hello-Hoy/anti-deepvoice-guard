@@ -3,9 +3,9 @@ package com.deepvoiceguard.app.inference
 /** 탐지 위험 수준. */
 enum class ThreatLevel {
     SAFE,       // 정상
-    CAUTION,    // 주의 (평균 > 0.6)
-    WARNING,    // 경고 (연속 3개 > 0.7)
-    DANGER,     // 위험 (단일 > 0.9)
+    CAUTION,    // 주의 (평균 > cautionThreshold)
+    WARNING,    // 경고 (연속 3개 > warningThreshold)
+    DANGER,     // 위험 (연속 2개 > dangerThreshold)
 }
 
 /** 집계된 탐지 판정 결과. */
@@ -37,9 +37,13 @@ class DetectionAggregator(
 
         val avgFake = results.map { it.fakeScore }.average().toFloat()
         val consecutiveHigh = countConsecutiveHigh(threshold = warningThreshold)
+        // 실기기 도메인 mismatch 완화: 같은 실음성에서도 AASIST 점수가 세그먼트마다 0.02~0.97 사이로
+        // 널뛰는 현상이 있어(Galaxy Xcover 5 기준), 단일 스파이크로는 DANGER 띄우지 않는다.
+        // 연속 2개 이상이 dangerThreshold를 넘어야만 DANGER.
+        val consecutiveVeryHigh = countConsecutiveHigh(threshold = dangerThreshold)
 
         val threatLevel = when {
-            result.fakeScore > dangerThreshold -> ThreatLevel.DANGER
+            consecutiveVeryHigh >= 2 -> ThreatLevel.DANGER
             consecutiveHigh >= 3 -> ThreatLevel.WARNING
             avgFake > cautionThreshold -> ThreatLevel.CAUTION
             else -> ThreatLevel.SAFE

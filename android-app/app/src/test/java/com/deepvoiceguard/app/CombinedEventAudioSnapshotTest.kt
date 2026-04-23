@@ -51,6 +51,8 @@ class CombinedEventAudioSnapshotTest {
         val markerA = FloatArray(80_000) { 0.25f }
         pipeline.ringBuffer.write(markerA)
 
+        // 2-consecutive DANGER 정책: 첫 add는 CAUTION, 두번째 add가 DANGER 로 승격.
+        fixture.aggregator.add(dangerDetectionResult())
         val dangerDetection = fixture.aggregator.add(dangerDetectionResult())
         invokeUpdateCombinedResult(pipeline, dangerDetection)
         advanceUntilIdle()
@@ -87,6 +89,8 @@ class CombinedEventAudioSnapshotTest {
 
         val audioA = FloatArray(80_000) { 0.3f }
         pipeline.ringBuffer.write(audioA)
+        // 2-consecutive DANGER 정책 — warm-up 1회 후 실제 DANGER emit.
+        fixture.aggregator.add(dangerDetectionResult())
         val dangerA = fixture.aggregator.add(dangerDetectionResult())
         invokeUpdateCombinedResult(pipeline, dangerA)
         advanceUntilIdle()
@@ -122,6 +126,8 @@ class CombinedEventAudioSnapshotTest {
             }
         }
 
+        // 2-consecutive DANGER 정책 — warm-up 1회 후 실제 DANGER emit.
+        fixture.aggregator.add(dangerDetectionResult())
         val dangerDetection = fixture.aggregator.add(dangerDetectionResult())
         invokeUpdateCombinedResult(pipeline, dangerDetection)
         advanceUntilIdle()
