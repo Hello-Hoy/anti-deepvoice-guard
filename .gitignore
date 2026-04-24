@@ -15,7 +15,7 @@ test-samples/Demo/
 model-training/data/real/
 model-training/data/fake/
 model-training/data/real_extra_iphone/
-model-training/data/mobile_fake_capture/
+model-training/data/mobile_fake_capture*/
 model-training/data/train.csv
 model-training/data/val.csv
 model-training/data/train_v*.csv
