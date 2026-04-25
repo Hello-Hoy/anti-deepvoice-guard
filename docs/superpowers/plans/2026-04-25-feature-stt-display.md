@@ -105,7 +105,8 @@ class TranscriptionHighlightTest {
             matchedKeywords = listOf(mk(matchedText = "계좌")),
         )
         val starts = result.spanStyles.map { it.start }
-        assertEquals(listOf(0, 7), starts)
+        // 두 번째 "계좌" 위치: "계좌"(2) + " "(1) + "비밀번호"(4) + " "(1) = index 8
+        assertEquals(listOf(0, 8), starts)
     }
 
     @Test
