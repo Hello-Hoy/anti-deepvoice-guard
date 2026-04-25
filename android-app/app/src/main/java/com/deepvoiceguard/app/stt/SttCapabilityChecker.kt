@@ -36,11 +36,17 @@ class SttCapabilityChecker(private val context: Context) {
     fun isOfflineRecognitionSupported(): Boolean {
         // API 33+ (Android 13): 공식 API로 on-device 가용성 질의.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return try {
+            val onDeviceOk = try {
                 SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
             } catch (_: Throwable) {
                 false
             }
+            if (onDeviceOk) return true
+            // [DEMO ONLY] on-device 미지원 시 네트워크 STT 로 fallback (시연용).
+            // 프로덕션 배포 전 반드시 revert — 개인정보 정책상 통화 음성을 클라우드로 보내면 안 됨.
+            // 본 commit 의 변경 (SttCapabilityChecker.kt + GoogleSttEngine.kt) 은 단일 commit
+            // 으로 분리되어 있어 `git revert <hash>` 로 복원 가능.
+            return isRecognitionAvailable()
         }
         // API 31-32: createOnDeviceSpeechRecognizer 존재. 실제 동작 여부는 GoogleSttEngine에서
         // onError(ERROR_*)로 확인되며, 에러 발생 시 fail-closed로 STT 비활성.

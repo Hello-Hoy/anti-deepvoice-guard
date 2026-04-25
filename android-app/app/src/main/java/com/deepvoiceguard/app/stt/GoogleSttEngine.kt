@@ -37,7 +37,19 @@ class GoogleSttEngine(
     private val mainHandler: Handler = Handler(Looper.getMainLooper()),
     private val recognizerFactory: () -> SpeechRecognizer? = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            // [DEMO ONLY] on-device 우선, 미지원 시 네트워크 STT fallback. 시연용 — 프로덕션
+            // 배포 전 revert 필수. SttCapabilityChecker.isOfflineRecognitionSupported 와 짝.
+            val onDeviceOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false)
+            } else {
+                true  // API 31-32: createOnDeviceSpeechRecognizer 존재만 가정
+            }
+            if (onDeviceOk) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            } else {
+                Log.w(TAG, "[DEMO ONLY] on-device STT 미지원 — 네트워크 SpeechRecognizer fallback")
+                SpeechRecognizer.createSpeechRecognizer(context)
+            }
         } else {
             null
         }
