@@ -50,6 +50,7 @@ import com.deepvoiceguard.app.service.AudioCaptureService
 import com.deepvoiceguard.app.service.CallDirection
 import com.deepvoiceguard.app.service.CallSession
 import com.deepvoiceguard.app.stt.SttStatus
+import com.deepvoiceguard.app.ui.components.TranscriptionView
 
 @Composable
 fun HomeScreen() {
@@ -356,24 +357,14 @@ fun HomeScreen() {
             }
         }
 
-        // 실시간 전사 카드 — STT 활성 시만.
-        if (transcription.isNotBlank()) {
+        // 실시간 전사 + 키워드 강조 — start 후 보임. matchedKeywords는 detector
+        // (PhishingKeywordDetector)가 정규화/동의어 처리 후 반환한 List<MatchedKeyword> 그대로 전달.
+        if (isMonitoring) {
             Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Live Transcription", style = MaterialTheme.typography.titleSmall)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = transcription.takeLast(500),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
+            TranscriptionView(
+                transcription = transcription,
+                matchedKeywords = matchedKeywords,
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
