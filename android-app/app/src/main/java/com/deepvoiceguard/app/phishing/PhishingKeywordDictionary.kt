@@ -36,7 +36,7 @@ class PhishingKeywordDictionary(context: Context) {
                         keyword = entry.keyword,
                         category = entry.category,
                         weight = entry.weight,
-                        matchedText = entry.keyword,
+                        matchedText = resolveOriginalSubstring(text, entry.keyword, entry.synonyms),
                     )
                 )
                 seen.add(entry.keyword)
@@ -49,7 +49,7 @@ class PhishingKeywordDictionary(context: Context) {
                             keyword = entry.keyword,
                             category = entry.category,
                             weight = entry.weight,
-                            matchedText = synonym,
+                            matchedText = resolveOriginalSubstring(text, entry.keyword, entry.synonyms),
                         )
                     )
                     seen.add(entry.keyword)
@@ -58,6 +58,29 @@ class PhishingKeywordDictionary(context: Context) {
             }
         }
         return matches
+    }
+
+    /**
+     * 원본 [text] 에서 [keyword] 또는 [synonyms] 중 하나를 plain (case-insensitive) 검색해
+     * 발견된 substring 을 원본 케이스 그대로 반환. 못 찾으면 [keyword] 를 fallback (사전 literal).
+     *
+     * 매칭 자체는 detector 가 정규화 후 결정한 것이므로, 이 함수의 역할은 "정규화 거친 원본
+     * 위치가 plain 검색으로 안 맞는" edge case (lowercase normalize, 어미 제거 등) 만 책임진다.
+     * UI ([buildHighlightedTranscript]) 의 indexOf 검색 신뢰도를 ~100% 로 끌어올리는 보강.
+     */
+    private fun resolveOriginalSubstring(
+        text: String,
+        keyword: String,
+        synonyms: List<String>,
+    ): String {
+        val candidates = listOf(keyword) + synonyms
+        for (cand in candidates) {
+            val idx = text.indexOf(cand, ignoreCase = true)
+            if (idx >= 0) {
+                return text.substring(idx, idx + cand.length)
+            }
+        }
+        return keyword  // fallback: 사전 literal
     }
 
     /**
