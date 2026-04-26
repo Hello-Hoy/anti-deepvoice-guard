@@ -94,7 +94,13 @@ private const val WAVEFORM_BUCKETS = 60
 private const val TYPING_INTERVAL_MS = 35L
 private const val PLAYBACK_TICK_MS = 60L
 
-private enum class DemoPhase { IDLE, PLAYING, REVEALING, DONE }
+/**
+ * 분석을 음성 재생보다 먼저 끝내고, 재생 + 결과 카드를 동시에 보여주는 플로우.
+ *
+ * IDLE → ANALYZING (분석 + 파형 로딩, 음성 X) → PLAYING (분석 결과 + 음성 재생 동시)
+ *      → REVEALING (음성 종료, 전사 typing) → DONE
+ */
+private enum class DemoPhase { IDLE, ANALYZING, PLAYING, REVEALING, DONE }
 
 @Composable
 fun DemoScreen() {
@@ -226,7 +232,8 @@ fun DemoScreen() {
         playbackProgress = 0f
         transcriptShown = ""
         waveform = FloatArray(WAVEFORM_BUCKETS)
-        phase = DemoPhase.PLAYING
+        // 1단계: 분석 + 파형 로딩 (음성 재생은 아직 X). 결과가 준비된 뒤 PLAYING 으로 전환.
+        phase = DemoPhase.ANALYZING
 
         // generation 일치일 때만 UI state를 쓰는 가드.
         fun stillMine() = scenarioGenerationRef.get() == myGen
@@ -239,6 +246,43 @@ fun DemoScreen() {
             val analysisDeferred: Deferred<Result<DemoResult>> = async(Dispatchers.IO) {
                 runCatching { pipeline.analyze(scenario.audioAsset, scenario.transcriptAsset) }
             }
+
+            // 분석 결과를 먼저 기다려 실패를 즉시 노출. 실패 시 형제 job을 취소한다.
+            val analysisOutcome = analysisDeferred.await()
+            // 취소된 이전 시나리오가 새 시나리오의 상태를 덮지 않도록 각 suspension 지점에서 활성 검사.
+            ensureActive()
+            if (analysisOutcome.isFailure) {
+                waveformDeferred.cancel()
+                val e = analysisOutcome.exceptionOrNull()
+                if (stillMine()) {
+                    val reason = (e as? DemoAnalysisException)?.reason
+                    errorMessage = if (reason != null) "분석 실패($reason): ${e.message}" else "분석 실패: ${e?.message ?: "unknown"}"
+                    phase = DemoPhase.IDLE
+                    selectedScenario = null
+                }
+                return@launch
+            }
+
+            val result = analysisOutcome.getOrThrow()
+            ensureActive()
+            if (!stillMine()) return@launch
+            analysisResult = result
+            // 파형 await — CancellationException은 rethrow, 그 외 실패는 기본값으로 진행.
+            // runCatching은 CancellationException도 Result.failure로 포장하여 상위 활성 검사를 우회하므로 사용 금지.
+            val waveformResult = try {
+                waveformDeferred.await()
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                FloatArray(WAVEFORM_BUCKETS)
+            }
+            ensureActive()
+            if (!stillMine()) return@launch
+            waveform = waveformResult
+
+            // 2단계: 분석 + 파형 준비 완료. PLAYING 으로 전환 + 음성 재생 시작.
+            // 결과 카드는 phase >= PLAYING 부터 보이므로 사용자는 음성과 결과를 동시에 받음.
+            phase = DemoPhase.PLAYING
             val playbackDeferred: Deferred<Boolean> = async {
                 startPlayback(
                     context = context,
@@ -249,7 +293,6 @@ fun DemoScreen() {
                             mediaPlayer?.let { runCatching { it.release() } }
                             mediaPlayer = mp
                         } else {
-                            // 취소된 시나리오의 준비된 player는 현재 UI 상태를 건드리지 않고 해제.
                             runCatching { mp.release() }
                         }
                     },
@@ -269,40 +312,6 @@ fun DemoScreen() {
                     },
                 )
             }
-
-            // 분석 결과를 먼저 기다려 실패를 즉시 노출. 실패 시 형제 job을 취소한다.
-            val analysisOutcome = analysisDeferred.await()
-            // 취소된 이전 시나리오가 새 시나리오의 상태를 덮지 않도록 각 suspension 지점에서 활성 검사.
-            ensureActive()
-            if (analysisOutcome.isFailure) {
-                playbackDeferred.cancel()
-                waveformDeferred.cancel()
-                val e = analysisOutcome.exceptionOrNull()
-                if (stillMine()) {
-                    val reason = (e as? DemoAnalysisException)?.reason
-                    errorMessage = if (reason != null) "분석 실패($reason): ${e.message}" else "분석 실패: ${e?.message ?: "unknown"}"
-                    phase = DemoPhase.IDLE
-                    selectedScenario = null
-                }
-                return@launch
-            }
-
-            val result = analysisOutcome.getOrThrow()
-            ensureActive()
-            if (!stillMine()) return@launch
-            analysisResult = result
-            // 파형/재생 await — CancellationException은 rethrow, 그 외 실패는 기본값으로 진행.
-            // runCatching은 CancellationException도 Result.failure로 포장하여 상위 활성 검사를 우회하므로 사용 금지.
-            val waveformResult = try {
-                waveformDeferred.await()
-            } catch (ce: kotlinx.coroutines.CancellationException) {
-                throw ce
-            } catch (_: Throwable) {
-                FloatArray(WAVEFORM_BUCKETS)
-            }
-            ensureActive()
-            if (!stillMine()) return@launch
-            waveform = waveformResult
 
             val playbackOk = try {
                 playbackDeferred.await()
@@ -364,7 +373,8 @@ fun DemoScreen() {
             Spacer(modifier = Modifier.height(12.dp))
 
             val result = analysisResult
-            if (phase >= DemoPhase.REVEALING && result != null) {
+            // 분석이 끝나면 PLAYING 진입 — 결과 카드와 음성 재생을 동시에 표시한다.
+            if (phase >= DemoPhase.PLAYING && result != null) {
                 DemoResultCard(
                     scenario = currentScenario,
                     result = result,
@@ -443,7 +453,8 @@ private fun DemoPlaybackSection(
     progress: Float,
 ) {
     val phaseLabel = when (phase) {
-        DemoPhase.PLAYING -> "🎵 재생 중 · AASIST 분석 중..."
+        DemoPhase.ANALYZING -> "🔍 분석 중... (음성 재생 준비)"
+        DemoPhase.PLAYING -> "🎵 재생 + 결과 표시"
         DemoPhase.REVEALING -> "✍ 전사 표시 중..."
         DemoPhase.DONE -> "✓ 분석 완료"
         DemoPhase.IDLE -> ""
@@ -484,7 +495,7 @@ private fun DemoPlaybackSection(
                 progress = { animatedProgress },
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (phase == DemoPhase.PLAYING) {
+            if (phase == DemoPhase.ANALYZING || phase == DemoPhase.PLAYING) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(
@@ -493,7 +504,7 @@ private fun DemoPlaybackSection(
                     )
                     Spacer(modifier = Modifier.height(0.dp))
                     Text(
-                        text = "  실시간 처리 중",
+                        text = if (phase == DemoPhase.ANALYZING) "  AASIST 분석 진행" else "  음성 재생 중",
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
