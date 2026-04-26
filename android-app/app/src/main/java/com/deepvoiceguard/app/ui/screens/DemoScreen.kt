@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -336,6 +338,7 @@ fun DemoScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
         Text(
@@ -410,8 +413,10 @@ fun DemoScreen() {
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(demoScenarios) { scenario ->
+            // 부모 Column 이 verticalScroll 이라 LazyColumn 을 중첩 못 함 (스크롤 컨테이너 충돌).
+            // 시나리오 6개라 Column 으로 충분.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (scenario in demoScenarios) {
                     val status = scenarioAvailability[scenario.id]
                     val available = status?.available == true
                     val audioMissing = status?.audioPlayable == false
