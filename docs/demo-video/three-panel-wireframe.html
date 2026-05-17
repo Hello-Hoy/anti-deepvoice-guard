@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TrueVoice Guard Three-Panel Wireframe</title>
+  <style>
+    :root {
+      --purple: #7357f6;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --safe: #20b46b;
+      --ink: #111;
+      --muted: #666;
+      --line: #e8e8e8;
+      --surface: #f7f7fb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #101018;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .stage {
+      width: min(1400px, 100vw);
+      aspect-ratio: 16 / 9;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1.18fr 1fr;
+      gap: 16px;
+      padding: 24px;
+      background: #151520;
+    }
+
+    .side-panel,
+    .center-panel {
+      border-radius: 18px;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .side-panel {
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      min-height: 0;
+      padding: 24px;
+      background: linear-gradient(180deg, #2b2b35, #111118);
+      color: #fff;
+    }
+
+    .side-panel.light {
+      background: linear-gradient(180deg, #f7f2ec, #d8d5d0);
+      color: var(--ink);
+    }
+
+    .side-label {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgb(255 255 255 / 14%);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .side-panel.light .side-label {
+      background: rgb(0 0 0 / 8%);
+    }
+
+    .person-placeholder {
+      width: 100%;
+      height: 72%;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px dashed rgb(255 255 255 / 28%);
+      font-size: clamp(18px, 2vw, 32px);
+      text-align: center;
+      line-height: 1.35;
+      padding: 24px;
+    }
+
+    .side-panel.light .person-placeholder {
+      border-color: rgb(0 0 0 / 18%);
+    }
+
+    .center-panel {
+      background: #fff;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .title {
+      font-size: clamp(22px, 2.2vw, 34px);
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .pill {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #efeafd;
+      color: var(--purple);
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .wave {
+      height: 110px;
+      border-radius: 14px;
+      background:
+        repeating-linear-gradient(90deg, transparent 0 15px, rgb(115 87 246 / 26%) 15px 20px),
+        linear-gradient(135deg, #130f2e, #292057);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .wave::after {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border-radius: 14px;
+      border: 1px solid rgb(255 255 255 / 18%);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: clamp(24px, 2.7vw, 42px);
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .danger {
+      color: var(--danger);
+    }
+
+    .warning {
+      color: var(--warning);
+    }
+
+    .safe {
+      color: var(--safe);
+    }
+
+    .transcript {
+      flex: 1;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      padding: 16px;
+      font-size: clamp(16px, 1.55vw, 23px);
+      line-height: 1.55;
+      overflow: hidden;
+    }
+
+    mark {
+      color: #8a2d00;
+      background: #ffe1b7;
+      border-radius: 6px;
+      padding: 0 4px;
+    }
+
+    .result {
+      border-radius: 12px;
+      padding: 16px;
+      background: #ffebee;
+      color: #9f1239;
+      font-weight: 900;
+      font-size: clamp(18px, 1.7vw, 26px);
+      text-align: center;
+    }
+
+    .caption {
+      width: min(1400px, 100vw);
+      margin: 14px auto 0;
+      color: #fff;
+      font-size: 15px;
+      line-height: 1.5;
+      padding: 0 24px 24px;
+    }
+  </style>
+</head>
+<body>
+  <main class="stage" aria-label="TrueVoice Guard three-panel demo wireframe">
+    <section class="side-panel">
+      <div class="side-label">Caller / Scammer</div>
+      <div class="person-placeholder">발신 측 영상<br>익명 또는 실제 녹음자</div>
+    </section>
+
+    <section class="center-panel">
+      <div class="header">
+        <div class="title">실시간 통화 분석 중</div>
+        <div class="pill">STT 활성</div>
+      </div>
+
+      <div class="wave" aria-label="waveform animation placeholder"></div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Voice Authenticity</div>
+          <div class="metric-value danger">FAKE SUSPECTED</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">AI Voice Probability</div>
+          <div class="metric-value danger">92%</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Voice Phishing Probability</div>
+          <div class="metric-value warning">61%</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Keyword Highlight</div>
+          <div class="metric-value warning">4 detected</div>
+        </div>
+      </div>
+
+      <div class="transcript">
+        <strong>STT 실시간 전사</strong><br>
+        아버지, 지금 <mark>급하게</mark> 확인해야 해요. 제 <mark>계좌</mark>가 막혀서
+        <mark>지금 바로</mark> <mark>송금</mark>이 필요해요.
+      </div>
+
+      <div class="result">Final Result: DANGER - AI Voice Impersonation Detected</div>
+    </section>
+
+    <section class="side-panel light">
+      <div class="side-label">Father / Victim</div>
+      <div class="person-placeholder">피해자 아버지<br>통화 수신 장면</div>
+    </section>
+  </main>
+
+  <p class="caption">
+    Scenario 1 and Scenario 2 must keep this same center UI structure.
+    Replace only the numbers, highlighted keywords, and final result.
+  </p>
+</body>
+</html>

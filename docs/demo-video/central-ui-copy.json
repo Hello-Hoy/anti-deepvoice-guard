@@ -1,0 +1,46 @@
+{
+  "layout": {
+    "title": "실시간 통화 분석 중",
+    "fields": [
+      "Voice Authenticity",
+      "AI Voice Probability",
+      "STT 실시간 전사",
+      "키워드 하이라이트",
+      "Voice Phishing Probability",
+      "Final Result"
+    ],
+    "notificationFormat": "가족 보호 알림: 가족 - 아버지 의 {event} 감지되었습니다."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_ai_voice_impersonation",
+      "title": "AI 음성 사칭 통화",
+      "voiceAuthenticity": "FAKE SUSPECTED",
+      "aiVoiceProbabilitySteps": ["21%", "58%", "92%"],
+      "sttTranscript": "아버지, 지금 급하게 확인해야 해요. 제 계좌가 막혀서 지금 바로 송금이 필요해요.",
+      "highlightedKeywords": ["급하게", "계좌", "지금 바로", "송금"],
+      "voicePhishingProbabilitySteps": ["12%", "36%", "61%"],
+      "finalResult": "DANGER - AI Voice Impersonation Detected",
+      "familyPushTitle": "TrueVoice Guard",
+      "familyPushBody": "가족 보호 알림: 가족 - 아버지 의 AI 음성 사칭 의심 통화가 감지되었습니다."
+    },
+    {
+      "id": "scenario_2_real_voice_phishing",
+      "title": "실제 목소리 보이스피싱",
+      "voiceAuthenticity": "REAL",
+      "aiVoiceProbabilitySteps": ["4%"],
+      "sttTranscript": "서울중앙지검 수사 담당자입니다. 아버님 명의의 계좌가 금융 범죄 수사에 연루된 것으로 확인되었습니다.",
+      "highlightedKeywords": ["검찰", "수사", "계좌", "이체", "보호 조치", "오늘 안에"],
+      "voicePhishingProbabilitySteps": ["18%", "53%", "87%"],
+      "finalResult": "WARNING - Voice Phishing Keywords Detected",
+      "familyPushTitle": "TrueVoice Guard",
+      "familyPushBody": "가족 보호 알림: 가족 - 아버지 의 보이스피싱 키워드가 감지되었습니다."
+    }
+  ],
+  "businessModel": {
+    "headline": "알뜰폰 통신사 앱에 연동되는 AI 음성 보호 부가서비스",
+    "features": ["딥보이스 탐지", "STT 키워드 분석", "가족 보호 알림"],
+    "closingTitle": "TrueVoice Guard",
+    "closingSubtitle": "AI Voice Protection for MVNO Users"
+  }
+}

@@ -250,7 +250,8 @@ class RVCPostVCEngine(VoiceCloneEngine):
                 ok = False
                 messages.append(f"upstream {upstream} 준비 안 됨: {upstream_message}")
 
-        messages.append(f"upstream={upstream}")
+        upstream_label = "edge-tts" if upstream == "edge_tts" else upstream
+        messages.append(f"upstream={upstream} ({upstream_label})")
         return ok, " / ".join(messages)
 
     def prepare_data(self, manifest_path: Path, out_dir: Path) -> Path:

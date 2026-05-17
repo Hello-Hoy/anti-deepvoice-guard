@@ -87,6 +87,42 @@
 
 ## 사용 예시
 
+### 0. OpenAI Custom Voice로 빠른 품질 확인
+
+OpenAI Custom Voice는 본인 목소리와 명시적 동의 녹음만 사용합니다. 현재 OpenAI 문서 기준으로 eligible organization에만 열리는 기능이며, 조직에 기능이 활성화되어 있어야 합니다.
+
+1. 동의 문구를 확인합니다.
+
+```bash
+.venv/bin/python model-training/voice-clone/openai_custom_voice.py consent-phrase --language ko
+```
+
+2. 위 문구만 읽은 `consent_recording.wav`와, 복제 기준으로 쓸 30초 이하/10MiB 이하 `sample_recording.wav`를 조용한 환경에서 따로 녹음합니다.
+
+3. API 키를 로컬 환경변수로 설정한 뒤 생성부터 테스트 합성까지 실행합니다. 키는 채팅이나 git에 남기지 않습니다.
+
+```bash
+export OPENAI_API_KEY="..."
+
+.venv/bin/python model-training/voice-clone/openai_custom_voice.py create-and-test \
+  --confirm-own-voice \
+  --consent-recording model-training/voice-clone/data/raw/hyohee/openai/consent_recording.wav \
+  --sample-recording model-training/voice-clone/data/raw/hyohee/openai/sample_recording.wav \
+  --voice-name hyohee_openai_test \
+  --text "안녕하세요. 이것은 내 목소리 기반 커스텀 보이스 테스트입니다." \
+  --out test-samples/Demo/openai_custom_voice_test.wav
+```
+
+성공하면 `consent_id`, `voice_id`, 테스트 출력 경로가 출력됩니다. 이후 같은 voice를 다시 쓰려면 다음처럼 `voice_id`만 넘깁니다.
+
+```bash
+.venv/bin/python model-training/voice-clone/openai_custom_voice.py synthesize \
+  --confirm-own-voice \
+  --voice-id voice_123abc \
+  --text "보이스피싱 탐지 테스트용 합성 음성입니다." \
+  --out test-samples/Demo/openai_custom_voice_second.wav
+```
+
 ### 1. 내 목소리로 문장 합성
 
 ```bash

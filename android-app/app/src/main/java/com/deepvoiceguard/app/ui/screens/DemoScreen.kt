@@ -86,10 +86,17 @@ private val demoScenarios = listOf(
     DemoScenario(4, "TTS 피싱", "AI 생성 음성 + 피싱 스크립트", "demo/demo_04.wav", "demo/demo_04_transcript.txt", "CRITICAL"),
     DemoScenario(5, "은행 정상 안내", "정상적인 은행 확인 전화", "demo/demo_05.wav", "demo/demo_05_transcript.txt", "SAFE"),
     DemoScenario(6, "보험 사기", "보험금 사기 시도", "demo/demo_06.wav", "demo/demo_06_transcript.txt", "WARNING"),
+    DemoScenario(
+        7,
+        "실제 목소리 보이스피싱",
+        "사람 음성 + STT 키워드 탐지",
+        "demo/demo_07_scenario2_real_voice_phishing.wav",
+        "demo/demo_07_scenario2_real_voice_phishing_transcript.txt",
+        "WARNING",
+    ),
 )
 
 private const val WAVEFORM_BUCKETS = 60
-private const val TYPING_INTERVAL_MS = 35L
 private const val PLAYBACK_TICK_MS = 60L
 
 private enum class DemoPhase { IDLE, PLAYING, REVEALING, DONE }
@@ -104,6 +111,7 @@ fun DemoScreen() {
     var phase by remember { mutableStateOf(DemoPhase.IDLE) }
     var playbackProgress by remember { mutableStateOf(0f) }
     var waveform by remember { mutableStateOf(FloatArray(WAVEFORM_BUCKETS)) }
+    var transcriptSource by remember { mutableStateOf("") }
     var transcriptShown by remember { mutableStateOf("") }
 
     // 엔진 초기화는 asset/ONNX 문제 시 예외를 던질 수 있으므로 구성 시 안전 생성.
@@ -121,7 +129,6 @@ fun DemoScreen() {
     // MediaPlayer + ticker job은 DisposableEffect로 생명주기 관리.
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var tickerJob by remember { mutableStateOf<Job?>(null) }
-    var typingJob by remember { mutableStateOf<Job?>(null) }
     var scenarioJob by remember { mutableStateOf<Job?>(null) }
     // 연속 탭에서도 시나리오 본문이 엄격히 직렬로 실행되도록 보장하는 뮤텍스.
     val scenarioMutex = remember { Mutex() }
@@ -131,7 +138,6 @@ fun DemoScreen() {
     DisposableEffect(engine) {
         onDispose {
             tickerJob?.cancel()
-            typingJob?.cancel()
             val running = scenarioJob
             val mpOrphan = if (running == null) mediaPlayer else null
             val engineRef = engine
@@ -198,7 +204,6 @@ fun DemoScreen() {
         // 감지하고 cancelAndJoin 경로로 정리해 engine.close() 경쟁을 피한다.
         scenarioJob?.cancel()
         tickerJob?.cancel(); tickerJob = null
-        typingJob?.cancel(); typingJob = null
         mediaPlayer?.let {
             runCatching { if (it.isPlaying) it.stop() }
             runCatching { it.release() }
@@ -210,6 +215,7 @@ fun DemoScreen() {
         phase = DemoPhase.IDLE
         playbackProgress = 0f
         waveform = FloatArray(WAVEFORM_BUCKETS)
+        transcriptSource = ""
         transcriptShown = ""
     }
 
@@ -222,6 +228,7 @@ fun DemoScreen() {
         errorMessage = null
         analysisResult = null
         playbackProgress = 0f
+        transcriptSource = ""
         transcriptShown = ""
         waveform = FloatArray(WAVEFORM_BUCKETS)
         phase = DemoPhase.PLAYING
@@ -233,6 +240,9 @@ fun DemoScreen() {
             scenarioMutex.withLock {
             val waveformDeferred: Deferred<FloatArray> = async(Dispatchers.IO) {
                 loadWaveform(context, scenario.audioAsset)
+            }
+            val transcriptDeferred: Deferred<String> = async(Dispatchers.IO) {
+                loadTranscriptAsset(context, scenario.transcriptAsset)
             }
             val analysisDeferred: Deferred<Result<DemoResult>> = async(Dispatchers.IO) {
                 runCatching { pipeline.analyze(scenario.audioAsset, scenario.transcriptAsset) }
@@ -255,7 +265,10 @@ fun DemoScreen() {
                         if (stillMine()) mediaPlayer = null
                     },
                     onTick = { ratio ->
-                        if (stillMine()) playbackProgress = ratio
+                        if (stillMine()) {
+                            playbackProgress = ratio
+                            transcriptShown = revealTranscriptAtProgress(transcriptSource, ratio)
+                        }
                     },
                     attachTicker = { job ->
                         if (stillMine()) {
@@ -266,6 +279,11 @@ fun DemoScreen() {
                         }
                     },
                 )
+            }
+
+            transcriptSource = transcriptDeferred.await()
+            if (stillMine()) {
+                transcriptShown = revealTranscriptAtProgress(transcriptSource, playbackProgress)
             }
 
             // 분석 결과를 먼저 기다려 실패를 즉시 노출. 실패 시 형제 job을 취소한다.
@@ -315,14 +333,7 @@ fun DemoScreen() {
             phase = DemoPhase.REVEALING
             // 재생 성공 시에만 progress bar를 완료로 채운다. 실패했다면 실제 멈춘 지점을 유지.
             if (playbackOk) playbackProgress = 1f
-            typingJob?.cancel()
-            typingJob = launch {
-                typeTranscript(result.transcript) { chunk ->
-                    // 본 scenario가 여전히 현재 세대일 때만 UI에 반영.
-                    if (stillMine()) transcriptShown = chunk
-                }
-            }
-            typingJob?.join()
+            transcriptShown = result.transcript
             ensureActive()
             if (!stillMine()) return@launch
             phase = DemoPhase.DONE
@@ -361,6 +372,13 @@ fun DemoScreen() {
             Spacer(modifier = Modifier.height(12.dp))
 
             val result = analysisResult
+            if (transcriptShown.isNotBlank() && phase == DemoPhase.PLAYING) {
+                DemoLiveTranscriptCard(
+                    result = result,
+                    transcriptShown = transcriptShown,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
             if (phase >= DemoPhase.REVEALING && result != null) {
                 DemoResultCard(
                     scenario = currentScenario,
@@ -559,6 +577,45 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBar(
 }
 
 @Composable
+private fun DemoLiveTranscriptCard(
+    result: DemoResult?,
+    transcriptShown: String,
+) {
+    val highlightTerms = result?.let { phishingHighlightTerms(it) }.orEmpty()
+    val visibleKeywords = visibleKeywordLabels(result, transcriptShown)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "실시간 STT 전사",
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = highlightKeywords(transcriptShown, highlightTerms),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (visibleKeywords.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "키워드 감지: ${visibleKeywords.joinToString(", ")}",
+                    color = Color.Red,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun DemoScenarioCard(
     scenario: DemoScenario,
     enabled: Boolean,
@@ -670,13 +727,8 @@ private fun DemoResultCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            val matched = result.phishingResult?.matchedKeywords.orEmpty()
-            // 표시용 라벨은 canonical keyword, 하이라이트용은 transcript에 실제로 등장한 matchedText 포함.
-            val canonicalLabels = matched.map { it.keyword }.filter { it.isNotBlank() }.distinct()
-            val highlightTerms = matched
-                .flatMap { listOf(it.matchedText, it.keyword) }
-                .filter { it.isNotBlank() }
-                .toSet()
+            val canonicalLabels = phishingKeywordLabels(result)
+            val highlightTerms = phishingHighlightTerms(result)
             if (canonicalLabels.isNotEmpty()) {
                 Text(
                     text = "감지 키워드: ${canonicalLabels.joinToString(", ")}",
@@ -707,6 +759,30 @@ private fun threatColor(level: CombinedThreatLevel): Color = when (level) {
     CombinedThreatLevel.WARNING -> Color(0xFFF57F17)
     CombinedThreatLevel.CAUTION -> Color(0xFFFF8F00)
     CombinedThreatLevel.SAFE -> Color(0xFF2E7D32)
+}
+
+private fun phishingKeywordLabels(result: DemoResult): List<String> =
+    result.phishingResult?.matchedKeywords.orEmpty()
+        .map { it.keyword }
+        .filter { it.isNotBlank() }
+        .distinct()
+
+private fun phishingHighlightTerms(result: DemoResult): Set<String> =
+    result.phishingResult?.matchedKeywords.orEmpty()
+        .flatMap { listOf(it.matchedText, it.keyword) }
+        .filter { it.isNotBlank() }
+        .toSet()
+
+private fun visibleKeywordLabels(result: DemoResult?, visibleTranscript: String): List<String> {
+    if (result == null || visibleTranscript.isBlank()) return emptyList()
+    return result.phishingResult?.matchedKeywords.orEmpty()
+        .filter { match ->
+            val terms = listOf(match.matchedText, match.keyword).filter { it.isNotBlank() }
+            terms.any { visibleTranscript.contains(it) }
+        }
+        .map { it.keyword }
+        .filter { it.isNotBlank() }
+        .distinct()
 }
 
 private fun highlightKeywords(text: String, keywords: Set<String>): AnnotatedString {
@@ -749,23 +825,21 @@ private fun highlightKeywords(text: String, keywords: Set<String>): AnnotatedStr
     }
 }
 
-private suspend fun typeTranscript(
-    full: String,
-    onUpdate: (String) -> Unit,
-) {
-    if (full.isEmpty()) {
-        kotlin.coroutines.coroutineContext.ensureActive()
-        onUpdate("")
-        return
-    }
-    val chunk = 2
-    var idx = 0
-    while (idx < full.length) {
-        // 매 chunk write 전에 활성 검사 — cancel이 delay 직후 도착했을 때 stale write 차단.
-        kotlin.coroutines.coroutineContext.ensureActive()
-        idx = min(idx + chunk, full.length)
-        onUpdate(full.substring(0, idx))
-        if (idx < full.length) delay(TYPING_INTERVAL_MS)
+private fun revealTranscriptAtProgress(full: String, progress: Float): String {
+    if (full.isBlank()) return ""
+    val end = (full.length * progress.coerceIn(0f, 1f)).toInt()
+        .coerceIn(0, full.length)
+    if (end <= 0) return ""
+    return full.substring(0, end)
+}
+
+private fun loadTranscriptAsset(context: android.content.Context, path: String): String {
+    return try {
+        context.assets.open(path).use { stream ->
+            stream.bufferedReader(Charsets.UTF_8).readText().trim()
+        }
+    } catch (_: Exception) {
+        ""
     }
 }
 
@@ -938,4 +1012,3 @@ private fun loadWaveform(context: android.content.Context, assetPath: String): F
         FloatArray(buckets)
     }
 }
-
