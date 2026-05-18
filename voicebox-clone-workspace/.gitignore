@@ -6,6 +6,7 @@ _anchor_candidates/
 jeonhyunmoo_clean/
 *.wav
 *.m4a
+*.mp3
 __pycache__/
 .pytest_cache/
 candidates/

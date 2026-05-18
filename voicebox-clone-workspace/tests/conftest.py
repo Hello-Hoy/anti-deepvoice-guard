@@ -10,7 +10,7 @@ SR = 16000
 
 
 def _mod_noise(dur_s: float, gap_every: float = 1.5, gap_len: float = 0.25,
-                amp: float = 0.2, seed: int = 0) -> np.ndarray:
+               amp: float = 0.2, seed: int = 0) -> np.ndarray:
     """진폭변조 대역잡음 + 주기적 완전무음 gap = '깨끗한 발화' 합성."""
     rng = np.random.default_rng(seed)
     n = int(dur_s * SR)
