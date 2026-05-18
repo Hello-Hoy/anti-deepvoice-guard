@@ -3,20 +3,19 @@ from __future__ import annotations
 import numpy as np
 
 
-def pick_target_cluster(labels: np.ndarray, file_ids: np.ndarray) -> int:
-    """가장 많은 '서로 다른 소스 파일'에 걸친 클러스터 선택.
-    동률 시 윈도우 수가 많은 클러스터. (전현무 = 메인 MC = 최다 파일 커버리지)"""
-    best_label = -1
-    best_key = (-1, -1)
+def rank_clusters(labels: np.ndarray, file_ids: np.ndarray) -> list[int]:
+    """클러스터를 (서로 다른 소스 파일 수, 윈도우 수) 내림차순 정렬한 라벨 리스트."""
+    scored: list[tuple[int, int, int]] = []
     for lab in np.unique(labels):
         mask = labels == lab
-        n_files = len(np.unique(file_ids[mask]))
-        n_win = int(mask.sum())
-        key = (n_files, n_win)
-        if key > best_key:
-            best_key = key
-            best_label = int(lab)
-    return best_label
+        scored.append((len(np.unique(file_ids[mask])), int(mask.sum()), int(lab)))
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [lab for _, _, lab in scored]
+
+
+def pick_target_cluster(labels: np.ndarray, file_ids: np.ndarray) -> int:
+    """가장 많은 서로 다른 파일에 걸친 클러스터(동률 시 윈도우 최다)."""
+    return rank_clusters(labels, file_ids)[0]
 
 
 def nearest_distinct_files(

@@ -29,3 +29,20 @@ def test_nearest_distinct_files_picks_one_per_file():
     assert len({fid for fid, _ in picks}) == 2  # 서로 다른 파일
     assert picks[0] == (10, 0)  # centroid에 가장 가까운 윈도우
     assert picks[1] == (12, 3)  # file 11(sim 0.20) 건너뛰고 file 12(sim 0.90) 선택
+
+
+from jhm_extract.anchor import rank_clusters
+
+
+def test_rank_clusters_orders_by_file_then_window():
+    labels = np.array([0, 0, 1, 1, 1, 2])
+    file_ids = np.array([0, 1, 2, 2, 2, 3])
+    # cluster0: 2 files,2 win ; cluster1: 1 file,3 win ; cluster2: 1 file,1 win
+    assert rank_clusters(labels, file_ids) == [0, 1, 2]
+
+
+def test_rank_clusters_first_equals_pick_target():
+    labels = np.array([0, 0, 1, 1, 1])
+    file_ids = np.array([0, 1, 0, 1, 1])
+    r = rank_clusters(labels, file_ids)
+    assert r[0] == pick_target_cluster(labels, file_ids) == 1
