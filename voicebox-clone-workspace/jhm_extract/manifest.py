@@ -45,8 +45,12 @@ class Manifest:
             "done_keys": sorted(self.done_keys),
             "clips": self.clips,
             "errors": self.errors,
-            "stats": self.stats(),
+            "stats": self.stats(),  # 정보용 스냅샷; load 시 다시 읽지 않고 재계산
         }
-        self.path.write_text(
+        # 원자적 쓰기: 다중 시간 실행 중 crash가 manifest를 truncate해
+        # 다음 run의 json.loads가 깨져 resume 전체를 잃는 것을 방지.
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+        tmp.replace(self.path)

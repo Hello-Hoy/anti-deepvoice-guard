@@ -16,7 +16,10 @@ def test_roundtrip_and_resume(tmp_path: Path):
     assert m2.done("keyA")
     assert not m2.done("keyC")
     assert len(m2.clips) == 1
+    assert m2.clips[0]["dur"] == 12.0  # 레코드 구조가 직렬화 왕복에서 보존됨
+    assert m2.clips[0]["src"] == "fileA.m4a"
     assert len(m2.errors) == 1
+    assert m2.errors[0] == {"src": "fileB.m4a", "msg": "decode failed"}
 
 
 def test_stats(tmp_path: Path):

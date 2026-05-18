@@ -972,7 +972,10 @@ def test_roundtrip_and_resume(tmp_path: Path):
     assert m2.done("keyA")
     assert not m2.done("keyC")
     assert len(m2.clips) == 1
+    assert m2.clips[0]["dur"] == 12.0  # 레코드 구조가 직렬화 왕복에서 보존됨
+    assert m2.clips[0]["src"] == "fileA.m4a"
     assert len(m2.errors) == 1
+    assert m2.errors[0] == {"src": "fileB.m4a", "msg": "decode failed"}
 
 
 def test_stats(tmp_path: Path):
@@ -1041,11 +1044,15 @@ class Manifest:
             "done_keys": sorted(self.done_keys),
             "clips": self.clips,
             "errors": self.errors,
-            "stats": self.stats(),
+            "stats": self.stats(),  # 정보용 스냅샷; load 시 다시 읽지 않고 재계산
         }
-        self.path.write_text(
+        # 원자적 쓰기: 다중 시간 실행 중 crash가 manifest를 truncate해
+        # 다음 run의 json.loads가 깨져 resume 전체를 잃는 것을 방지.
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+        tmp.replace(self.path)
 ```
 
 - [ ] **Step 4: 통과 확인**
