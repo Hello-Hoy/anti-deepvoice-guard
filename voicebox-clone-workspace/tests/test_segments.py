@@ -32,12 +32,12 @@ def test_short_turn_dropped():
 
 def test_small_gap_merged():
     is_t = np.zeros(40, dtype=bool)
-    is_t[5:18] = True
-    is_t[19] = False  # 한 윈도우 dip
+    is_t[5:19] = True
+    is_t[19] = False  # 정확히 한 윈도우(idx 19) dip
     is_t[20:33] = True
     turns = group_turns(is_t, _starts(40), WIN_S, STEP_S,
                          gap_merge_s=0.8, min_turn_s=6.0)
-    assert len(turns) == 1  # gap 병합되어 단일 턴
+    assert len(turns) == 1  # 1-윈도우 gap 병합되어 단일 턴
 
 
 def test_large_gap_splits():
@@ -46,6 +46,16 @@ def test_large_gap_splits():
     is_t[40:58] = True  # 사이에 큰 무음
     turns = group_turns(is_t, _starts(60), WIN_S, STEP_S,
                          gap_merge_s=0.8, min_turn_s=6.0)
+    assert len(turns) == 2
+
+
+def test_just_over_gap_splits():
+    # 3-윈도우 gap: starts[nxt]-starts[j]=1.6 > step+gap_merge=1.2 → 병합 금지
+    is_t = np.zeros(40, dtype=bool)
+    is_t[5:15] = True   # j는 idx 14에서 끝
+    is_t[18:28] = True  # gap = idx 15,16,17 (3 윈도우)
+    turns = group_turns(is_t, _starts(40), WIN_S, STEP_S,
+                         gap_merge_s=0.8, min_turn_s=0.0)
     assert len(turns) == 2
 
 
@@ -66,6 +76,12 @@ def test_clip_from_turn_long_center_cropped():
     t0, t1 = c
     assert abs((t1 - t0) - 20.0) < 1e-6
     assert abs(((t0 + t1) / 2) - 115.0) < 1e-6
+
+
+def test_clip_from_turn_exact_bounds_kept_whole():
+    # dur == min, dur == max 는 strict 비교(<,>)라 둘 다 절취 없이 그대로 반환
+    assert clip_from_turn({"t0": 1.0, "t1": 11.0, "dur": 10.0}, 10.0, 20.0) == (1.0, 11.0)
+    assert clip_from_turn({"t0": 2.0, "t1": 22.0, "dur": 20.0}, 10.0, 20.0) == (2.0, 22.0)
 
 
 def test_select_clips_skips_short():

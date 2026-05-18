@@ -63,7 +63,9 @@ def select_clips(
     min_clip_s: float = 10.0,
     max_clip_s: float = 20.0,
 ) -> list[tuple[float, float]]:
-    """여러 턴에서 클립 절취 (clip_from_turn 위에 구현)."""
+    """여러 턴에서 클립 절취 (clip_from_turn 위에 구현).
+
+    min_clip_s 미만 턴은 제외되므로 len(결과) <= len(turns) 일 수 있다."""
     out: list[tuple[float, float]] = []
     for t in turns:
         c = clip_from_turn(t, min_clip_s, max_clip_s)
@@ -79,7 +81,10 @@ def sliding_window_embeddings(
     step_s: float = 0.4,
     sr: int = 16000,
 ):
-    """16k mono y에 슬라이딩 윈도우 화자 임베딩. (starts[s], L2정규화 embs[n,256]) 반환."""
+    """16k mono y에 슬라이딩 윈도우 화자 임베딩.
+
+    반환: (starts: list[float] 윈도우 시작초, embs: ndarray[n,256] L2정규화).
+    임베딩이 없으면 ([], ndarray shape (0,256))."""
     win = int(win_s * sr)
     step = int(step_s * sr)
     starts: list[float] = []

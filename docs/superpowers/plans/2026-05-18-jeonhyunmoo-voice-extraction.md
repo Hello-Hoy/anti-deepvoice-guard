@@ -564,12 +564,12 @@ def test_short_turn_dropped():
 
 def test_small_gap_merged():
     is_t = np.zeros(40, dtype=bool)
-    is_t[5:18] = True
-    is_t[19] = False  # 한 윈도우 dip
+    is_t[5:19] = True
+    is_t[19] = False  # 정확히 한 윈도우(idx 19) dip
     is_t[20:33] = True
     turns = group_turns(is_t, _starts(40), WIN_S, STEP_S,
                          gap_merge_s=0.8, min_turn_s=6.0)
-    assert len(turns) == 1  # gap 병합되어 단일 턴
+    assert len(turns) == 1  # 1-윈도우 gap 병합되어 단일 턴
 
 
 def test_large_gap_splits():
@@ -578,6 +578,16 @@ def test_large_gap_splits():
     is_t[40:58] = True  # 사이에 큰 무음
     turns = group_turns(is_t, _starts(60), WIN_S, STEP_S,
                          gap_merge_s=0.8, min_turn_s=6.0)
+    assert len(turns) == 2
+
+
+def test_just_over_gap_splits():
+    # 3-윈도우 gap: starts[nxt]-starts[j]=1.6 > step+gap_merge=1.2 → 병합 금지
+    is_t = np.zeros(40, dtype=bool)
+    is_t[5:15] = True   # j는 idx 14에서 끝
+    is_t[18:28] = True  # gap = idx 15,16,17 (3 윈도우)
+    turns = group_turns(is_t, _starts(40), WIN_S, STEP_S,
+                         gap_merge_s=0.8, min_turn_s=0.0)
     assert len(turns) == 2
 ```
 
@@ -639,7 +649,7 @@ def group_turns(
 - [ ] **Step 4: 통과 확인**
 
 Run: `.venv/bin/python -m pytest voicebox-clone-workspace/tests/test_segments.py -v`
-Expected: 4 passed
+Expected: 5 passed
 
 - [ ] **Step 5: Commit**
 
@@ -680,6 +690,12 @@ def test_clip_from_turn_long_center_cropped():
     assert abs(((t0 + t1) / 2) - 115.0) < 1e-6
 
 
+def test_clip_from_turn_exact_bounds_kept_whole():
+    # dur == min, dur == max 는 strict 비교(<,>)라 둘 다 절취 없이 그대로 반환
+    assert clip_from_turn({"t0": 1.0, "t1": 11.0, "dur": 10.0}, 10.0, 20.0) == (1.0, 11.0)
+    assert clip_from_turn({"t0": 2.0, "t1": 22.0, "dur": 20.0}, 10.0, 20.0) == (2.0, 22.0)
+
+
 def test_select_clips_skips_short():
     turns = [
         {"t0": 0.0, "t1": 8.0, "dur": 8.0},
@@ -716,7 +732,9 @@ def select_clips(
     min_clip_s: float = 10.0,
     max_clip_s: float = 20.0,
 ) -> list[tuple[float, float]]:
-    """여러 턴에서 클립 절취 (clip_from_turn 위에 구현)."""
+    """여러 턴에서 클립 절취 (clip_from_turn 위에 구현).
+
+    min_clip_s 미만 턴은 제외되므로 len(결과) <= len(turns) 일 수 있다."""
     out: list[tuple[float, float]] = []
     for t in turns:
         c = clip_from_turn(t, min_clip_s, max_clip_s)
@@ -728,7 +746,7 @@ def select_clips(
 - [ ] **Step 4: 통과 확인**
 
 Run: `.venv/bin/python -m pytest voicebox-clone-workspace/tests/test_segments.py -v`
-Expected: 8 passed
+Expected: 10 passed
 
 - [ ] **Step 5: Commit**
 
@@ -780,7 +798,10 @@ def sliding_window_embeddings(
     step_s: float = 0.4,
     sr: int = 16000,
 ):
-    """16k mono y에 슬라이딩 윈도우 화자 임베딩. (starts[s], L2정규화 embs[n,256]) 반환."""
+    """16k mono y에 슬라이딩 윈도우 화자 임베딩.
+
+    반환: (starts: list[float] 윈도우 시작초, embs: ndarray[n,256] L2정규화).
+    임베딩이 없으면 ([], ndarray shape (0,256))."""
     win = int(win_s * sr)
     step = int(step_s * sr)
     starts: list[float] = []
@@ -799,7 +820,7 @@ def sliding_window_embeddings(
 - [ ] **Step 4: 통과 확인**
 
 Run: `.venv/bin/python -m pytest voicebox-clone-workspace/tests/test_segments.py -v`
-Expected: 9 passed (임베딩 테스트는 VoiceEncoder 로드로 수 초 소요 가능)
+Expected: 11 passed (임베딩 테스트는 VoiceEncoder 로드로 수 초 소요 가능)
 
 - [ ] **Step 5: Commit**
 
@@ -1034,7 +1055,7 @@ Expected: 2 passed
 - [ ] **Step 5: 전체 회귀 확인**
 
 Run: `.venv/bin/python -m pytest voicebox-clone-workspace -v`
-Expected: 모든 테스트 passed (24개 내외)
+Expected: 모든 테스트 passed (27개 내외)
 
 - [ ] **Step 6: Commit**
 
