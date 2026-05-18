@@ -1,0 +1,13 @@
+# 대용량 소스/중간산물/산출 — 커밋 금지
+[전현무계획3]*/
+_cache/
+_anchor/
+_anchor_candidates/
+jeonhyunmoo_clean/
+*.wav
+*.m4a
+__pycache__/
+.pytest_cache/
+candidates/
+mp3_prof_segments*/
+outputs/
