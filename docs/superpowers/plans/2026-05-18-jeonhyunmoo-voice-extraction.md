@@ -1166,8 +1166,16 @@ def run_bootstrap(sample_n: int = 30, k: int = 6, force: bool = False) -> None:
     centroid = km.cluster_centers_[target]
     centroid = centroid / (np.linalg.norm(centroid) + 1e-9)
 
+    # spec §6: top-N 고유사 윈도우로 1회 반복정제. raw KMeans centroid보다
+    # 화자에 더 타이트한 anchor가 되어 다운스트림 매칭 품질을 올린다
+    # (기존 diarize_mp3_v2.py의 검증된 패턴).
+    sims_all = X @ centroid
+    topk = np.argsort(sims_all)[-min(200, len(sims_all)):]
+    anchor = X[topk].mean(axis=0)
+    anchor = anchor / (np.linalg.norm(anchor) + 1e-9)
+
     mask = km.labels_ == target
-    picks = nearest_distinct_files(X[mask], fid[mask], centroid, n=3)
+    picks = nearest_distinct_files(X[mask], fid[mask], anchor, n=3)
     cand_idx = np.where(mask)[0]
 
     print(f"\n전현무 후보 클러스터={target} "
@@ -1183,7 +1191,7 @@ def run_bootstrap(sample_n: int = 30, k: int = 6, force: bool = False) -> None:
         sf.write(str(out), seg, SR, subtype="PCM_16")
         print(f"  {out}")
 
-    np.save(ANCHOR_NPY, centroid.astype(np.float32))
+    np.save(ANCHOR_NPY, anchor.astype(np.float32))
     print(f"\n임시 anchor 저장: {ANCHOR_NPY}")
     print("→ 후보가 전현무가 맞으면 그대로 --pilot 진행.")
     print("→ 아니면 --rebootstrap --k <다른값> 으로 재시도.")
@@ -1484,7 +1492,7 @@ git commit -m "feat(jhm): 전현무 단독 음성 추출 파이프라인 완료"
 
 **1. Spec coverage:**
 - §4 아키텍처(decode/anchor/cleanliness/extract/run_batch) → Task 1·2(decode), 7(anchor 선택), 3(cleanliness), 4·5·6(segments), 8(manifest), 10(runner) ✓
-- §6 부트스트랩(최다 파일 커버리지, 확인 게이트, top-N 정제) → Task 7·9·11 ✓ (반복정제는 centroid + 클러스터 평균으로 구현, spec의 top-200 의도 충족)
+- §6 부트스트랩(최다 파일 커버리지, 확인 게이트, top-N 정제) → Task 7·9·11 ✓ (run_bootstrap이 KMeans centroid 후 top-min(200,n) 고유사 윈도우 평균으로 1회 반복정제하여 anchor 저장 — diarize_mp3_v2 패턴)
 - §7 클린니스(sim, gap-energy, voiced, 클리핑, flatness, 길이) → Task 3 전부 + Task 10에서 sim 게이트 ✓
 - §8 에러처리/재개(명시 로깅, 캐시, manifest done) → Task 2(캐시), 8(manifest), 10(에러 기록·resumable) ✓
 - §9 검증(부트스트랩·파일럿 청취, 통계, spot-check) → Task 11·12·13 ✓
@@ -1496,5 +1504,7 @@ git commit -m "feat(jhm): 전현무 단독 음성 추출 파이프라인 완료"
 **3. Type consistency:** `cleanliness_gate`→`CleanMetrics`(.passed/.reasons/.gap_rms_ratio/.as_dict) 일관. `group_turns`→dict(t0,t1,dur,i0,i1). `clip_from_turn`(단일 턴→클립|None) / `select_clips`(다중) 시그니처 일관.
 
 **Self-review에서 발견·교정 완료 (1):** 초안의 Task 10 `for (t0,t1),turn in zip(clips,turns)` 는 `select_clips`가 짧은 턴을 스킵하면 clips·turns 정렬이 어긋나는 버그였다. → Task 5에 단일책임 `clip_from_turn` 추가, Task 10 runner를 `for turn in turns: clip_from_turn(turn)` 턴별 루프로 교정하여 턴-클립-sim 페어링을 구조적으로 보장.
+
+**최종 리뷰에서 발견·교정 완료 (3):** 전체 코드 리뷰가 spec §6의 "top-N 고유사 윈도우 1회 반복정제" 미구현(run_bootstrap이 raw KMeans centroid를 그대로 저장)을 적발. → run_bootstrap에 `sims_all=X@centroid → top-min(200,n) 윈도우 평균 → 정규화 anchor` 반복정제를 추가하고, 후보 클립 선정·anchor 저장 모두 정제된 anchor를 사용하도록 교정. spec §6/plan Task 9 동기화 (diarize_mp3_v2 검증 패턴과 일치).
 
 **실행 중 발견·교정 완료 (2):** Task 3 구현 시 서브에이전트가 BLOCKED로 적발 — 초안은 `voiced_mult=4.0 == gap_ratio_max=4.0` 이라 gap-energy 분기가 영원히 미발동(pause 프레임은 정의상 rms<noise_floor*4 이므로 gap_rms_ratio≤4=gap_ratio_max)하는 dead code였고, `speech_with_music_bed` 톤(0.03)이 과대해 gap이 사라져 no_pauses로만 잡혀 `test_music_bed_rejected_by_gap_energy`가 실패했다. → `voiced_mult=8.0`, `gap_ratio_max=3.0`(불변식 gap_ratio_max<voiced_mult), 픽스처 톤 0.03→0.007 로 교정. 6개 픽스처 전부 의도한 사유로 통과함을 수식 검증. spec §7 수치도 동기화.

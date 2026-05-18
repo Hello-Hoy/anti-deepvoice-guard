@@ -77,8 +77,16 @@ def run_bootstrap(sample_n: int = 30, k: int = 6, force: bool = False) -> None:
     centroid = km.cluster_centers_[target]
     centroid = centroid / (np.linalg.norm(centroid) + 1e-9)
 
+    # spec §6: top-N 고유사 윈도우로 1회 반복정제. raw KMeans centroid보다
+    # 화자에 더 타이트한 anchor가 되어 다운스트림 매칭 품질을 올린다
+    # (기존 diarize_mp3_v2.py의 검증된 패턴).
+    sims_all = X @ centroid
+    topk = np.argsort(sims_all)[-min(200, len(sims_all)):]
+    anchor = X[topk].mean(axis=0)
+    anchor = anchor / (np.linalg.norm(anchor) + 1e-9)
+
     mask = km.labels_ == target
-    picks = nearest_distinct_files(X[mask], fid[mask], centroid, n=3)
+    picks = nearest_distinct_files(X[mask], fid[mask], anchor, n=3)
     cand_idx = np.where(mask)[0]
 
     print(f"\n전현무 후보 클러스터={target} "
@@ -94,7 +102,7 @@ def run_bootstrap(sample_n: int = 30, k: int = 6, force: bool = False) -> None:
         sf.write(str(out), seg, SR, subtype="PCM_16")
         print(f"  {out}")
 
-    np.save(ANCHOR_NPY, centroid.astype(np.float32))
+    np.save(ANCHOR_NPY, anchor.astype(np.float32))
     print(f"\n임시 anchor 저장: {ANCHOR_NPY}")
     print("→ 후보가 전현무가 맞으면 그대로 --pilot 진행.")
     print("→ 아니면 --rebootstrap --k <다른값> 으로 재시도.")
