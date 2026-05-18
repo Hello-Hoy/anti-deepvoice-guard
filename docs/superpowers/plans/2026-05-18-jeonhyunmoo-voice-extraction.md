@@ -129,9 +129,12 @@ def clean_speech() -> np.ndarray:
 
 @pytest.fixture
 def speech_with_music_bed(clean_speech) -> np.ndarray:
+    # 톤 진폭 0.007 (RMS≈5e-3): noise_floor(1e-3)의 gap_ratio_max(3)배는 넘되
+    # voiced_mult(8)배는 안 넘어야 pause로 분류되어 gap-energy 분기가 발동한다.
+    # 더 크면 gap 프레임이 voiced로 분류돼 no_pauses로 잡힘(다른 판별기).
     n = clean_speech.shape[0]
     t = np.arange(n) / SR
-    tone = (0.03 * np.sin(2 * np.pi * 200.0 * t)).astype(np.float32)
+    tone = (0.007 * np.sin(2 * np.pi * 200.0 * t)).astype(np.float32)
     return (clean_speech + tone).astype(np.float32)
 
 
@@ -435,15 +438,21 @@ def _rms(y: np.ndarray) -> np.ndarray:
 def cleanliness_gate(
     y: np.ndarray,
     noise_floor: float,
-    voiced_mult: float = 4.0,
-    gap_ratio_max: float = 4.0,
+    voiced_mult: float = 8.0,
+    gap_ratio_max: float = 3.0,
     min_voiced_ratio: float = 0.7,
     max_sil_s: float = 1.5,
     peak_max: float = 0.95,
     min_pause_ratio: float = 0.04,
     max_flatness: float = 0.6,
 ) -> CleanMetrics:
-    """모든 조건 통과 시 passed=True. 핵심 판별기는 gap_rms_ratio + pause_ratio."""
+    """모든 조건 통과 시 passed=True. 핵심 판별기는 gap_rms_ratio + pause_ratio.
+
+    불변식: gap_ratio_max < voiced_mult. pause = (rms < noise_floor*voiced_mult)로
+    분류되므로, gap-energy 분기가 도달 가능하려면 BGM 판정 임계가 pause 임계보다
+    낮아야 한다(같으면 gap_rms_ratio ≤ voiced_mult = gap_ratio_max 로 영원히 미발동).
+    크게 깔린 BGM은 gap을 voiced로 만들어 no_pauses 분기가 잡고, 약하게 깔린
+    BGM(noise_floor의 gap_ratio_max~voiced_mult배)은 gap-energy 분기가 잡는다."""
     reasons: list[str] = []
     rms = _rms(y)
     voiced_thr = max(noise_floor * voiced_mult, 1e-6)
@@ -1454,4 +1463,6 @@ git commit -m "feat(jhm): 전현무 단독 음성 추출 파이프라인 완료"
 
 **3. Type consistency:** `cleanliness_gate`→`CleanMetrics`(.passed/.reasons/.gap_rms_ratio/.as_dict) 일관. `group_turns`→dict(t0,t1,dur,i0,i1). `clip_from_turn`(단일 턴→클립|None) / `select_clips`(다중) 시그니처 일관.
 
-**Self-review에서 발견·교정 완료:** 초안의 Task 10 `for (t0,t1),turn in zip(clips,turns)` 는 `select_clips`가 짧은 턴을 스킵하면 clips·turns 정렬이 어긋나는 버그였다. → Task 5에 단일책임 `clip_from_turn` 추가, Task 10 runner를 `for turn in turns: clip_from_turn(turn)` 턴별 루프로 교정하여 턴-클립-sim 페어링을 구조적으로 보장. (반영 완료, 본 플랜은 교정본)
+**Self-review에서 발견·교정 완료 (1):** 초안의 Task 10 `for (t0,t1),turn in zip(clips,turns)` 는 `select_clips`가 짧은 턴을 스킵하면 clips·turns 정렬이 어긋나는 버그였다. → Task 5에 단일책임 `clip_from_turn` 추가, Task 10 runner를 `for turn in turns: clip_from_turn(turn)` 턴별 루프로 교정하여 턴-클립-sim 페어링을 구조적으로 보장.
+
+**실행 중 발견·교정 완료 (2):** Task 3 구현 시 서브에이전트가 BLOCKED로 적발 — 초안은 `voiced_mult=4.0 == gap_ratio_max=4.0` 이라 gap-energy 분기가 영원히 미발동(pause 프레임은 정의상 rms<noise_floor*4 이므로 gap_rms_ratio≤4=gap_ratio_max)하는 dead code였고, `speech_with_music_bed` 톤(0.03)이 과대해 gap이 사라져 no_pauses로만 잡혀 `test_music_bed_rejected_by_gap_energy`가 실패했다. → `voiced_mult=8.0`, `gap_ratio_max=3.0`(불변식 gap_ratio_max<voiced_mult), 픽스처 톤 0.03→0.007 로 교정. 6개 픽스처 전부 의도한 사유로 통과함을 수식 검증. spec §7 수치도 동기화.

@@ -78,7 +78,7 @@
 세그먼트가 **모든** 조건을 통과해야 채택:
 
 1. **화자 신뢰도**: anchor 코사인 sim ≥ `SIM_THR` (파일럿서 튜닝, 초기 0.80). 겹침 구간은 임베딩이 화자 사이로 흐려져 sim 하락 → 자연 배제
-2. **gap-energy (BGM 판별, 핵심)**: 세그먼트 내 pause 프레임 검출(RMS < voiced_thr) → pause 프레임 평균 RMS가 전역 노이즈플로어의 작은 배수(초기 4×) 이하여야 통과. BGM이 깔리면 pause에도 음악 에너지 잔존 → 탈락. 반대로 pause가 거의 없어도(연속 에너지 = 음악/내레이션 베드 의심) 탈락
+2. **gap-energy (BGM 판별, 핵심)**: pause 프레임 검출(RMS < noise_floor·voiced_mult, 초기 voiced_mult=8) → pause 프레임 평균 RMS가 노이즈플로어의 gap_ratio_max배(초기 3×) 이하여야 통과. **불변식 gap_ratio_max < voiced_mult** (같으면 pause 정의상 gap-energy 분기 미발동). 약하게 깔린 BGM → gap-energy로 탈락, 크게 깔린 BGM → pause가 사라져(연속 에너지) `no_pauses` 분기로 탈락. 모든 초기값은 파일럿서 튜닝
 3. **voiced ratio** ≥ 0.7, **최장 무음** ≤ 1.5s
 4. **클리핑**: peak ≤ 0.95
 5. **스펙트럼 보조**: spectral_flatness 중앙값으로 tonal(음악/효과음) 의심 구간 컷

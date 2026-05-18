@@ -34,9 +34,12 @@ def clean_speech() -> np.ndarray:
 
 @pytest.fixture
 def speech_with_music_bed(clean_speech) -> np.ndarray:
+    # 톤 진폭 0.007 (RMS≈5e-3): noise_floor(1e-3)의 gap_ratio_max(3)배는 넘되
+    # voiced_mult(8)배는 안 넘어야 gap 프레임이 pause로 분류돼 gap-energy 분기가
+    # 발동한다. 더 크면 gap이 voiced로 분류돼 no_pauses(다른 판별기)로 잡힘.
     n = clean_speech.shape[0]
     t = np.arange(n) / SR
-    tone = (0.03 * np.sin(2 * np.pi * 200.0 * t)).astype(np.float32)
+    tone = (0.007 * np.sin(2 * np.pi * 200.0 * t)).astype(np.float32)
     return (clean_speech + tone).astype(np.float32)
 
 
