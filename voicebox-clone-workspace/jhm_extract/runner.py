@@ -16,7 +16,8 @@ WIN_S = 1.6
 STEP_S = 0.4
 HOP_MS = 50
 
-from .cli import ANCHOR_NPY, CACHE, OUT_DIR, _encoder
+# 상수 뒤 import는 의도적: cli↔runner 순환을 cli의 lazy import로 끊으므로 안전.
+from .cli import ANCHOR_NPY, CACHE, OUT_DIR, _encoder  # noqa: E402
 
 
 def _noise_floor(y: np.ndarray) -> float:
@@ -72,7 +73,10 @@ def run_extract(srcs: list[Path], sim_thr: float, tag: str) -> None:
             if not cm.passed:
                 continue
             dur = t1 - t0
+            # i0,i1는 inclusive 윈도우 인덱스 → 슬라이스 end에 +1
             sim = float(sims[turn["i0"]:turn["i1"] + 1].mean())
+            # 통과 클립은 gap_rms_ratio ≤ gap_ratio_max(3) 이라 clean_score∈[0.25,1];
+            # max(0,..)는 방어용. 단조감소라 순위는 divisor와 무관하게 동일.
             clean_score = max(0.0, 1.0 - cm.gap_rms_ratio / 4.0)
             score = float(sim * np.sqrt(dur) * (0.5 + 0.5 * clean_score))
             simtag = int(round(sim * 100))
@@ -89,7 +93,7 @@ def run_extract(srcs: list[Path], sim_thr: float, tag: str) -> None:
             n_kept += 1
         if key:
             man.mark_done(key, n_kept)
-        if si % 10 == 0:
+        if si > 0 and si % 10 == 0:
             man.save()
         print(f"  [{si}] {src.name[:40]}  clips={n_kept}")
 
