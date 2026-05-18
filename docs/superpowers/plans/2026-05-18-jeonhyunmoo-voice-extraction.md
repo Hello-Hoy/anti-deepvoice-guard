@@ -1505,6 +1505,8 @@ git commit -m "feat(jhm): 전현무 단독 음성 추출 파이프라인 완료"
 
 **Self-review에서 발견·교정 완료 (1):** 초안의 Task 10 `for (t0,t1),turn in zip(clips,turns)` 는 `select_clips`가 짧은 턴을 스킵하면 clips·turns 정렬이 어긋나는 버그였다. → Task 5에 단일책임 `clip_from_turn` 추가, Task 10 runner를 `for turn in turns: clip_from_turn(turn)` 턴별 루프로 교정하여 턴-클립-sim 페어링을 구조적으로 보장.
 
+**대화형 부트스트랩 게이트에서 발견·설계전환 (4):** Task 11 부트스트랩 청취 결과 사용자가 "전현무 아님·섞임" 판정. 진단: 예능 짧은 클립은 나레이션 성우가 거의 모든 영상에 깔려, "최다 파일 커버리지 단일 클러스터 자동선택"이 성우(실측 27/30 커버)를 잡음 — k 변경만으론 재발. → 사용자 합의 하에 **상위 N 클러스터 제시 → 사용자 선택형**으로 전환: `anchor.rank_clusters`(TDD, pick_target_cluster를 위임 리팩터), `cli.run_bootstrap` 다중 클러스터(k 기본 12, top_n 6, 각 `_anchor_candidates/cluster_NN/` + `_anchor/cluster_NN.npy`), `--use-cluster N`로 정식 anchor 채택. spec §6 갱신, 커밋 25303f5·a11bfbf, 리뷰 APPROVED. (Task 7/9 코드는 repo·spec §6가 최신 소스)
+
 **최종 리뷰에서 발견·교정 완료 (3):** 전체 코드 리뷰가 spec §6의 "top-N 고유사 윈도우 1회 반복정제" 미구현(run_bootstrap이 raw KMeans centroid를 그대로 저장)을 적발. → run_bootstrap에 `sims_all=X@centroid → top-min(200,n) 윈도우 평균 → 정규화 anchor` 반복정제를 추가하고, 후보 클립 선정·anchor 저장 모두 정제된 anchor를 사용하도록 교정. spec §6/plan Task 9 동기화 (diarize_mp3_v2 검증 패턴과 일치).
 
 **실행 중 발견·교정 완료 (2):** Task 3 구현 시 서브에이전트가 BLOCKED로 적발 — 초안은 `voiced_mult=4.0 == gap_ratio_max=4.0` 이라 gap-energy 분기가 영원히 미발동(pause 프레임은 정의상 rms<noise_floor*4 이므로 gap_rms_ratio≤4=gap_ratio_max)하는 dead code였고, `speech_with_music_bed` 톤(0.03)이 과대해 gap이 사라져 no_pauses로만 잡혀 `test_music_bed_rejected_by_gap_energy`가 실패했다. → `voiced_mult=8.0`, `gap_ratio_max=3.0`(불변식 gap_ratio_max<voiced_mult), 픽스처 톤 0.03→0.007 로 교정. 6개 픽스처 전부 의도한 사유로 통과함을 수식 검증. spec §7 수치도 동기화.
