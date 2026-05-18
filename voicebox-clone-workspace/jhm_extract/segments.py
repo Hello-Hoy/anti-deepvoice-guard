@@ -70,3 +70,26 @@ def select_clips(
         if c is not None:
             out.append(c)
     return out
+
+
+def sliding_window_embeddings(
+    y: np.ndarray,
+    encoder,
+    win_s: float = 1.6,
+    step_s: float = 0.4,
+    sr: int = 16000,
+):
+    """16k mono y에 슬라이딩 윈도우 화자 임베딩. (starts[s], L2정규화 embs[n,256]) 반환."""
+    win = int(win_s * sr)
+    step = int(step_s * sr)
+    starts: list[float] = []
+    embs: list[np.ndarray] = []
+    for s in range(0, max(0, len(y) - win + 1), step):
+        emb = encoder.embed_utterance(y[s:s + win])
+        embs.append(emb)
+        starts.append(s / sr)
+    if not embs:
+        return [], np.zeros((0, 256), dtype=np.float32)
+    arr = np.stack(embs).astype(np.float32)
+    arr /= np.linalg.norm(arr, axis=1, keepdims=True) + 1e-9
+    return starts, arr

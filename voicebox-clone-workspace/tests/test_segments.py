@@ -74,3 +74,20 @@ def test_select_clips_skips_short():
         {"t0": 3.0, "t1": 18.0, "dur": 15.0},
     ]
     assert select_clips(turns, 10.0, 20.0) == [(3.0, 18.0)]
+
+
+def test_sliding_window_embeddings_shapes():
+    from resemblyzer import VoiceEncoder
+
+    from jhm_extract.segments import sliding_window_embeddings
+
+    rng = np.random.default_rng(0)
+    y = (rng.standard_normal(16000 * 5).astype(np.float32) * 0.1)
+    enc = VoiceEncoder(device="cpu", verbose=False)
+    starts, embs = sliding_window_embeddings(y, enc, win_s=1.6, step_s=0.4)
+    assert embs.ndim == 2
+    assert embs.shape[0] == len(starts)
+    assert embs.shape[0] > 5
+    norms = np.linalg.norm(embs, axis=1)
+    assert np.allclose(norms, 1.0, atol=1e-4)  # 정규화됨
+    assert all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
