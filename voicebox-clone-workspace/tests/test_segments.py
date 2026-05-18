@@ -47,3 +47,30 @@ def test_large_gap_splits():
     turns = group_turns(is_t, _starts(60), WIN_S, STEP_S,
                          gap_merge_s=0.8, min_turn_s=6.0)
     assert len(turns) == 2
+
+
+from jhm_extract.segments import clip_from_turn, select_clips
+
+
+def test_clip_from_turn_short_returns_none():
+    assert clip_from_turn({"t0": 0.0, "t1": 8.0, "dur": 8.0}, 10.0, 20.0) is None
+
+
+def test_clip_from_turn_in_range_whole():
+    assert clip_from_turn({"t0": 3.0, "t1": 18.0, "dur": 15.0}, 10.0, 20.0) == (3.0, 18.0)
+
+
+def test_clip_from_turn_long_center_cropped():
+    c = clip_from_turn({"t0": 100.0, "t1": 130.0, "dur": 30.0}, 10.0, 20.0)
+    assert c is not None
+    t0, t1 = c
+    assert abs((t1 - t0) - 20.0) < 1e-6
+    assert abs(((t0 + t1) / 2) - 115.0) < 1e-6
+
+
+def test_select_clips_skips_short():
+    turns = [
+        {"t0": 0.0, "t1": 8.0, "dur": 8.0},
+        {"t0": 3.0, "t1": 18.0, "dur": 15.0},
+    ]
+    assert select_clips(turns, 10.0, 20.0) == [(3.0, 18.0)]
