@@ -872,6 +872,7 @@ def test_nearest_distinct_files_picks_one_per_file():
     assert len(picks) == 2
     assert len({fid for fid, _ in picks}) == 2  # 서로 다른 파일
     assert picks[0] == (10, 0)  # centroid에 가장 가까운 윈도우
+    assert picks[1] == (12, 3)  # file 11(sim 0.20) 건너뛰고 file 12(sim 0.90) 선택
 ```
 
 - [ ] **Step 2: 실패 확인**
