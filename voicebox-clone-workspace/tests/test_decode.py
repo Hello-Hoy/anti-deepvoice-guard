@@ -1,6 +1,10 @@
+import subprocess
 from pathlib import Path
 
-from jhm_extract.decode import cache_key
+import numpy as np
+import soundfile as sf
+
+from jhm_extract.decode import cache_key, decode_to_wav16k
 
 
 def test_cache_key_stable_for_same_file(tmp_path: Path):
@@ -22,14 +26,6 @@ def test_cache_key_is_16_hex(tmp_path: Path):
     f.write_bytes(b"x" * 10)
     k = cache_key(f)
     assert len(k) == 16 and all(c in "0123456789abcdef" for c in k)
-
-
-import subprocess
-
-import numpy as np
-import soundfile as sf
-
-from jhm_extract.decode import decode_to_wav16k
 
 
 def _make_m4a(path: Path):
