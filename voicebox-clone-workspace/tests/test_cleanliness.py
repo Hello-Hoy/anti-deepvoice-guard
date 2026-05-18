@@ -6,7 +6,7 @@ NF = 1e-3  # 테스트용 고정 노이즈 플로어
 def test_clean_speech_passes(clean_speech):
     m = cleanliness_gate(clean_speech, noise_floor=NF)
     assert m.passed, m.reasons
-    assert m.gap_rms_ratio < 4.0
+    assert m.gap_rms_ratio < 3.0  # 실제 gate 임계(gap_ratio_max 기본값)
     assert m.voiced_ratio >= 0.7
 
 
