@@ -63,3 +63,40 @@ def write_manifest(path: Path, entries: list[dict]) -> None:
 
 def read_manifest(path: Path) -> list[dict]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def slice_segments(vocal32: np.ndarray, segs16: list[dict],
+                   sr16: int = 16000, sr32: int = 32000) -> list[tuple[np.ndarray, dict]]:
+    """16k 인덱스 세그먼트를 32k 보컬에서 슬라이스. (clip32k, meta) 리스트."""
+    segs32 = remap_segments(segs16, sr_from=sr16, sr_to=sr32)
+    out = []
+    n = len(vocal32)
+    for s16, s32 in zip(segs16, segs32):
+        a, b = max(0, s32["start"]), min(n, s32["end"])
+        if b <= a:
+            continue
+        meta = {
+            "start_s": round(s16["start"] / sr16, 3),
+            "end_s": round(s16["end"] / sr16, 3),
+            "dur": round((b - a) / sr32, 3),
+            "sim": float(s16.get("sim", 0.0)),
+        }
+        out.append((vocal32[a:b].astype(np.float32), meta))
+    return out
+
+
+def save_segments(vocal32: np.ndarray, segs16: list[dict], source: str, out_dir: Path,
+                  start_index: int = 1, sr16: int = 16000, sr32: int = 32000) -> list[dict]:
+    """채택 세그먼트를 32k wav로 저장 + manifest 엔트리 리스트 반환."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    entries: list[dict] = []
+    idx = start_index
+    for clip, meta in slice_segments(vocal32, segs16, sr16=sr16, sr32=sr32):
+        sid = seg_id(idx)
+        peak = float(np.max(np.abs(clip))) or 1.0
+        y = (clip / peak * 0.97).astype(np.float32)
+        sf.write(str(out_dir / f"{sid}.wav"), y, sr32)
+        entries.append({"id": sid, "source": source, **meta})
+        idx += 1
+    return entries

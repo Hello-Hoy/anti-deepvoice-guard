@@ -53,3 +53,32 @@ def test_manifest_roundtrip(tmp_path):
     p = tmp_path / "segments.json"
     write_manifest(p, entries)
     assert read_manifest(p) == entries
+
+
+import numpy as np
+from jhm.gptsovits import slice_segments, save_segments
+
+
+def test_slice_segments_cuts_by_remapped_indices():
+    vocal32 = np.arange(96000, dtype=np.float32)  # 3s @ 32k
+    segs16 = [{"start": 16000, "end": 32000, "sim": 0.9, "dur": 1.0}]  # 1.0~2.0s
+    clips = slice_segments(vocal32, segs16, sr16=16000, sr32=32000)
+    assert len(clips) == 1
+    clip, meta = clips[0]
+    assert clip[0] == 32000 and clip[-1] == 63999
+    assert meta["start_s"] == 1.0 and meta["end_s"] == 2.0
+
+
+def test_save_segments_writes_wavs_and_manifest(tmp_path):
+    vocal32 = np.sin(np.linspace(0, 50, 96000)).astype(np.float32)
+    segs16 = [
+        {"start": 0, "end": 16000, "sim": 0.91, "dur": 1.0},
+        {"start": 32000, "end": 48000, "sim": 0.85, "dur": 1.0},
+    ]
+    entries = save_segments(vocal32, segs16, source="ep01.m4a", out_dir=tmp_path,
+                            start_index=1, sr16=16000, sr32=32000)
+    assert [e["id"] for e in entries] == ["jhm_0001", "jhm_0002"]
+    for e in entries:
+        assert (tmp_path / f"{e['id']}.wav").exists()
+        assert e["source"] == "ep01.m4a"
+    assert entries[0]["sim"] == 0.91
