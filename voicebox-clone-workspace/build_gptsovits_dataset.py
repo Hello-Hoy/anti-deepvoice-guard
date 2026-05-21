@@ -23,6 +23,7 @@ GS = WORK / "jhm_work" / "gptsovits"
 STAGING = GS / "staging"
 SEG_DIR = STAGING / "segments"
 MANIFEST = STAGING / "segments.json"
+PROCESSED = STAGING / "processed.json"
 EXPORT_SR = 32000
 PREVIEW = STAGING / "preview"
 REJECT = STAGING / "reject.txt"
@@ -44,19 +45,21 @@ def _anchor() -> np.ndarray:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
+    import json
+    import librosa
+
     device = pick_device()
     anchor = _anchor()
     SEG_DIR.mkdir(parents=True, exist_ok=True)
-    entries: list[dict] = []
-    if MANIFEST.exists():
-        entries = G.read_manifest(MANIFEST)
-    done = {e["source"] for e in entries}
+    entries: list[dict] = G.read_manifest(MANIFEST) if MANIFEST.exists() else []
+    processed: list[str] = json.loads(PROCESSED.read_text(encoding="utf-8")) if PROCESSED.exists() else []
+    done = set(processed) | {e["source"] for e in entries}
     next_idx = len(entries) + 1
-    import librosa
 
     for src in _sources(args.limit):
-        if src.name in done:
-            log(f"[skip] {src.name} (이미 추출됨)")
+        rel = str(src.relative_to(SRC_DIR))
+        if rel in done:
+            log(f"[skip] {rel} (이미 처리됨)")
             continue
         try:
             vocals, vsr = demucs_vocal(src, device=device)
@@ -64,21 +67,50 @@ def cmd_extract(args: argparse.Namespace) -> int:
             voc32 = librosa.resample(vocals, orig_sr=vsr, target_sr=EXPORT_SR).astype(np.float32)
             segs = vad_segments(voc16)
             embs, kept = embed_segments(voc16, segs)
-            if len(kept) == 0:
-                log(f"[extract] {src.name}: 발화 0")
-                continue
-            sims = cosine(embs, anchor)
-            chosen = [{**kept[i], "sim": float(sims[i])} for i in range(len(kept)) if sims[i] >= args.threshold]
-            new = G.save_segments(voc32, chosen, source=src.name, out_dir=SEG_DIR,
+            chosen = []
+            if len(kept):
+                sims = cosine(embs, anchor)
+                chosen = [{**kept[i], "sim": float(sims[i])} for i in range(len(kept)) if sims[i] >= args.threshold]
+            new = G.save_segments(voc32, chosen, source=rel, out_dir=SEG_DIR,
                                   start_index=next_idx, sr16=SR, sr32=EXPORT_SR)
             next_idx += len(new)
             entries.extend(new)
+            processed.append(rel)
             G.write_manifest(MANIFEST, entries)
-            log(f"[extract] {src.name}: {len(chosen)}/{len(kept)} 채택 (T={args.threshold})")
+            PROCESSED.write_text(json.dumps(processed, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+            log(f"[extract] {rel}: {len(chosen)}/{len(kept)} 채택 (T={args.threshold})")
         except Exception as exc:  # noqa: BLE001 — 한 파일 실패가 전체를 막지 않도록
-            log(f"[extract] {src.name} 실패: {type(exc).__name__}: {exc}")
+            log(f"[extract] {rel} 실패: {type(exc).__name__}: {exc}")
     total = sum(e["dur"] for e in entries)
-    log(f"[extract] 총 {len(entries)}개 세그먼트 / {total/60:.1f}분 → {MANIFEST}")
+    log(f"[extract] 총 {len(entries)}개 세그먼트 / {total/60:.1f}분 (처리 {len(processed)}파일) → {MANIFEST}")
+    return 0
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    import librosa
+
+    device = pick_device()
+    anchor = _anchor()
+    thresholds = args.thresholds or [0.70, 0.75, 0.80, 0.85]
+    grand: dict[float, float] = {t: 0.0 for t in thresholds}
+    for src in _sources(args.n):
+        try:
+            vocals, vsr = demucs_vocal(src, device=device)
+            voc16 = librosa.resample(vocals, orig_sr=vsr, target_sr=SR).astype(np.float32)
+            segs = vad_segments(voc16)
+            embs, kept = embed_segments(voc16, segs)
+            if len(kept) == 0:
+                log(f"[probe] {src.name}: 발화 0"); continue
+            sims = cosine(embs, anchor)
+            log(f"[probe] {src.name}: 발화 {len(kept)}개 "
+                f"sim mean={sims.mean():.3f} p75={np.percentile(sims,75):.3f} max={sims.max():.3f}")
+            for t in thresholds:
+                grand[t] += sum(kept[i]["dur"] for i in range(len(kept)) if sims[i] >= t)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[probe] {src.name} 실패: {type(exc).__name__}: {exc}")
+    log("=== 임계별 누적 채택 분량 (probe " + f"{args.n}개 파일) ===")
+    for t in thresholds:
+        log(f"  T={t:.2f} → {grand[t]/60:.1f}분")
     return 0
 
 
@@ -101,6 +133,8 @@ def cmd_rebuild_anchor(args: argparse.Namespace) -> int:
 
 
 def cmd_montage(args: argparse.Namespace) -> int:
+    if not MANIFEST.exists():
+        log("[montage] segments.json 없음 — 먼저 extract 실행"); return 1
     entries = G.read_manifest(MANIFEST)
     entries_sorted = sorted(entries, key=lambda e: e["sim"], reverse=True)
     PREVIEW.mkdir(parents=True, exist_ok=True)
@@ -123,6 +157,8 @@ def cmd_montage(args: argparse.Namespace) -> int:
 
 
 def cmd_finalize(args: argparse.Namespace) -> int:
+    if not MANIFEST.exists():
+        log("[finalize] segments.json 없음 — 먼저 extract 실행"); return 1
     entries = G.read_manifest(MANIFEST)
     rejected = G.parse_reject(REJECT.read_text(encoding="utf-8")) if REJECT.exists() else set()
     kept = [e for e in entries if e["id"] not in rejected]
@@ -159,6 +195,10 @@ def build_parser() -> argparse.ArgumentParser:
     pf = sub.add_parser("finalize")
     pf.add_argument("--threshold", type=float, default=0.0, help="README 기록용")
     pf.set_defaults(func=cmd_finalize)
+    pp = sub.add_parser("probe")
+    pp.add_argument("--n", type=int, default=6)
+    pp.add_argument("--thresholds", type=float, nargs="*", default=None)
+    pp.set_defaults(func=cmd_probe)
     return p
 
 
