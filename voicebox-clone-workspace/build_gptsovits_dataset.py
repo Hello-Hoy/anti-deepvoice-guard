@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,6 +26,8 @@ MANIFEST = STAGING / "segments.json"
 EXPORT_SR = 32000
 PREVIEW = STAGING / "preview"
 REJECT = STAGING / "reject.txt"
+DATASET = GS / "dataset"
+WAVS = DATASET / "wavs"
 CLEAN_REFS = ["montage_cluster_01.wav", "montage_cluster_05.wav",
               "montage_cluster_07.wav", "montage_cluster_16.wav"]
 
@@ -119,6 +122,31 @@ def cmd_montage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_finalize(args: argparse.Namespace) -> int:
+    entries = G.read_manifest(MANIFEST)
+    rejected = G.parse_reject(REJECT.read_text(encoding="utf-8")) if REJECT.exists() else set()
+    kept = [e for e in entries if e["id"] not in rejected]
+    if not kept:
+        log("[finalize] 남은 세그먼트 0 — 중단")
+        return 1
+    WAVS.mkdir(parents=True, exist_ok=True)
+    for e in kept:
+        shutil.copyfile(SEG_DIR / f"{e['id']}.wav", WAVS / f"{e['id']}.wav")
+    device = pick_device()
+    texts = G.transcribe_segments([WAVS / f"{e['id']}.wav" for e in kept],
+                                  device="cuda" if device == "cuda" else "cpu")
+    list_entries = [{"relpath": f"wavs/{e['id']}.wav", "text": texts.get(e["id"], "")} for e in kept]
+    lines = G.build_list_lines(list_entries, speaker="jhm", lang="ko")
+    (DATASET / "jhm.list").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (DATASET / "relocate_list.py").write_text(G.relocate_script_text(), encoding="utf-8")
+    (DATASET / "requirements.txt").write_text(G.requirements_text(), encoding="utf-8")
+    total_min = sum(e["dur"] for e in kept) / 60
+    (DATASET / "README.md").write_text(G.readme_text(len(lines), total_min, args.threshold), encoding="utf-8")
+    log(f"[finalize] {len(lines)}개 라벨 / {total_min:.1f}분 → {DATASET}/jhm.list "
+        f"(제외 {len(rejected)}, 빈전사 {len(kept)-len(lines)})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -128,6 +156,9 @@ def build_parser() -> argparse.ArgumentParser:
     pe.set_defaults(func=cmd_extract)
     sub.add_parser("rebuild-anchor").set_defaults(func=cmd_rebuild_anchor)
     sub.add_parser("montage").set_defaults(func=cmd_montage)
+    pf = sub.add_parser("finalize")
+    pf.add_argument("--threshold", type=float, default=0.0, help="README 기록용")
+    pf.set_defaults(func=cmd_finalize)
     return p
 
 

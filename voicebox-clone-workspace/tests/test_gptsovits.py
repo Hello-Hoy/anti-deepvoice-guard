@@ -95,3 +95,13 @@ def test_timeline_lines_format():
     lines = timeline_lines(placed)
     assert lines[0] == "00:00.0  jhm_0001  sim=0.910  ep01.m4a"
     assert lines[1] == "00:03.2  jhm_0002  sim=0.850  ep02.m4a"
+
+
+from jhm.gptsovits import relocate_script_text
+
+
+def test_relocate_script_text_contains_relocate_lines_call():
+    txt = relocate_script_text()
+    assert "relocate_lines" in txt
+    assert "argparse" in txt
+    assert "jhm.list" in txt

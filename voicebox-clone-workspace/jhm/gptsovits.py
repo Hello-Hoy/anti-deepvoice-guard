@@ -130,3 +130,75 @@ def build_montage(entries: list[dict], seg_dir: Path, out_wav: Path,
     y = (np.concatenate(parts) if parts else np.zeros(1, np.float32)).astype(np.float32)
     sf.write(str(out_wav), y, sr)
     return placed
+
+
+def transcribe_segments(seg_paths: list[Path], device: str = "cpu",
+                        model_name: str = "large-v3") -> dict[str, str]:
+    """faster-whisper(ko)로 각 wav 전사 → {파일명stem: text}."""
+    from faster_whisper import WhisperModel
+
+    compute = "float16" if device == "cuda" else "int8"
+    model = WhisperModel(model_name, device=device, compute_type=compute)
+    out: dict[str, str] = {}
+    for p in seg_paths:
+        segs, _ = model.transcribe(str(p), language="ko", beam_size=5)
+        out[Path(p).stem] = "".join(s.text for s in segs).strip()
+    return out
+
+
+def relocate_script_text() -> str:
+    """dataset/relocate_list.py 내용. Windows에서 .list 경로를 절대경로로 변환."""
+    return '''"""jhm.list의 상대경로를 이 폴더 기준 절대경로로 변환.
+
+사용(Windows): python relocate_list.py --base "D:/gpt-sovits/jhm_dataset"
+"""
+import argparse
+from pathlib import Path
+
+
+def relocate_lines(lines, base, sep="/"):
+    out = []
+    base = base.rstrip("/\\\\")
+    for ln in lines:
+        parts = ln.split("|", 1)
+        out.append(f"{base}{sep}{parts[0]}|{parts[1]}" if len(parts) == 2 else ln)
+    return out
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base", required=True, help="dataset 폴더의 절대경로")
+    ap.add_argument("--list", default="jhm.list")
+    ap.add_argument("--out", default="jhm.abs.list")
+    a = ap.parse_args()
+    lines = Path(a.list).read_text(encoding="utf-8").splitlines()
+    Path(a.out).write_text("\\n".join(relocate_lines(lines, a.base)) + "\\n", encoding="utf-8")
+    print(f"wrote {a.out} ({len(lines)} lines)")
+'''
+
+
+def requirements_text() -> str:
+    return "\n".join([
+        "torch", "torchaudio", "demucs", "librosa", "soundfile",
+        "numpy", "resemblyzer", "faster-whisper", "scikit-learn",
+    ]) + "\n"
+
+
+def readme_text(n_segments: int, total_min: float, threshold: float) -> str:
+    return f"""# 전현무 GPT-SoVITS 데이터셋
+
+- 세그먼트: {n_segments}개 / 약 {total_min:.1f}분 (32kHz mono)
+- 추출 임계(anchor sim): {threshold}
+- 라벨 파일: `jhm.list` (형식: `상대경로|jhm|ko|전사`)
+
+## Windows GPT-SoVITS 사용
+1. 이 폴더를 GPT-SoVITS 작업 위치로 복사.
+2. 절대경로 변환:
+   `python relocate_list.py --base "이_폴더_절대경로"`  → `jhm.abs.list` 생성
+3. GPT-SoVITS WebUI에서 라벨 파일=`jhm.abs.list`, 오디오 폴더=`wavs/` 지정 후 학습.
+
+## 재추출(선택)
+`jhm/`, `build_gptsovits_dataset.py`, `jhm_work/anchor/anchor.npy`를 함께 복사하고
+`pip install -r requirements.txt` 후:
+`python build_gptsovits_dataset.py rebuild-anchor && python build_gptsovits_dataset.py extract --threshold {threshold}`
+"""
