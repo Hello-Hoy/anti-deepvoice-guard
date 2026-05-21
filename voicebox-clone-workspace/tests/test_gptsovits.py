@@ -105,3 +105,31 @@ def test_relocate_script_text_contains_relocate_lines_call():
     assert "relocate_lines" in txt
     assert "argparse" in txt
     assert "jhm.list" in txt
+
+
+from jhm.gptsovits import cluster_labels, dominant_cluster_indices
+
+
+def test_cluster_labels_separates_two_speakers():
+    import numpy as np
+    a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    b = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    embs = np.stack([a, a, b, b, b])
+    labels = cluster_labels(embs, distance_threshold=0.5)
+    assert labels[0] == labels[1]
+    assert labels[2] == labels[3] == labels[4]
+    assert labels[0] != labels[2]
+
+
+def test_cluster_labels_handles_empty_and_single():
+    import numpy as np
+    assert len(cluster_labels(np.zeros((0, 192), np.float32))) == 0
+    assert list(cluster_labels(np.ones((1, 192), np.float32))) == [0]
+
+
+def test_dominant_cluster_picks_max_total_duration():
+    import numpy as np
+    labels = np.array([0, 0, 1, 1, 1])
+    kept = [{"dur": 5.0}, {"dur": 5.0}, {"dur": 1.0}, {"dur": 1.0}, {"dur": 1.0}]
+    # cluster 0 = 10s vs cluster 1 = 3s → 0
+    assert dominant_cluster_indices(labels, kept) == [0, 1]

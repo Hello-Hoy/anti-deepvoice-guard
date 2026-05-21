@@ -202,3 +202,28 @@ def readme_text(n_segments: int, total_min: float, threshold: float) -> str:
 `pip install -r requirements.txt` 후:
 `python build_gptsovits_dataset.py rebuild-anchor && python build_gptsovits_dataset.py extract --threshold {threshold}`
 """
+
+
+def cluster_labels(embs: np.ndarray, distance_threshold: float = 0.5) -> np.ndarray:
+    """ECAPA 임베딩 → agglomerative(cosine, average) 클러스터 레이블."""
+    if len(embs) == 0:
+        return np.zeros(0, dtype=int)
+    if len(embs) == 1:
+        return np.zeros(1, dtype=int)
+    from sklearn.cluster import AgglomerativeClustering
+
+    return AgglomerativeClustering(
+        n_clusters=None, metric="cosine", linkage="average",
+        distance_threshold=distance_threshold,
+    ).fit_predict(embs)
+
+
+def dominant_cluster_indices(labels: np.ndarray, kept: list[dict]) -> list[int]:
+    """총 발화시간(dur 합)이 가장 큰 클러스터의 세그먼트 인덱스 리스트(오름차순)."""
+    if len(labels) == 0:
+        return []
+    durs: dict[int, float] = {}
+    for i, lab in enumerate(labels):
+        durs[int(lab)] = durs.get(int(lab), 0.0) + kept[i]["dur"]
+    best = max(durs, key=durs.get)
+    return [i for i in range(len(labels)) if int(labels[i]) == best]

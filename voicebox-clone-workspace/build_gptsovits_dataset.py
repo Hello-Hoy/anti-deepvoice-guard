@@ -86,6 +86,54 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract_speaker(args: argparse.Namespace) -> int:
+    import unicodedata
+    import librosa
+
+    from jhm.ecapa import ecapa_embed_segments
+
+    device = pick_device()
+    SEG_DIR.mkdir(parents=True, exist_ok=True)
+    entries: list[dict] = G.read_manifest(MANIFEST) if MANIFEST.exists() else []
+    next_idx = len(entries) + 1
+
+    def _norm(s: str) -> str:
+        return unicodedata.normalize("NFC", s)
+
+    match = _norm(args.match) if args.match else None
+    srcs = [p for p in _sources(None) if match is None or match in _norm(p.name)]
+    if not srcs:
+        log(f"[extract-speaker] 매칭 파일 없음: {args.match}")
+        return 1
+
+    for src in srcs:
+        rel = str(src.relative_to(SRC_DIR))
+        try:
+            vocals, vsr = demucs_vocal(src, device=device)
+            voc16 = librosa.resample(vocals, orig_sr=vsr, target_sr=SR).astype(np.float32)
+            voc32 = librosa.resample(vocals, orig_sr=vsr, target_sr=EXPORT_SR).astype(np.float32)
+            segs = vad_segments(voc16)
+            embs, kept = ecapa_embed_segments(voc16, segs, device="cpu")
+            if len(kept) == 0:
+                log(f"[extract-speaker] {rel}: 발화 0")
+                continue
+            labels = G.cluster_labels(embs, distance_threshold=args.dt)
+            keep_idx = G.dominant_cluster_indices(labels, kept)
+            chosen = [kept[i] for i in keep_idx]
+            new = G.save_segments(voc32, chosen, source=rel, out_dir=SEG_DIR,
+                                  start_index=next_idx, sr16=SR, sr32=EXPORT_SR)
+            next_idx += len(new)
+            entries.extend(new)
+            G.write_manifest(MANIFEST, entries)
+            log(f"[extract-speaker] {rel}: dominant {len(chosen)}/{len(kept)} 발화 / "
+                f"{sum(c['dur'] for c in chosen)/60:.1f}분")
+        except Exception as exc:  # noqa: BLE001 — 한 파일 실패가 전체를 막지 않도록
+            log(f"[extract-speaker] {rel} 실패: {type(exc).__name__}: {exc}")
+    total = sum(e["dur"] for e in entries)
+    log(f"[extract-speaker] 총 {len(entries)}개 세그먼트 / {total/60:.1f}분 → {MANIFEST}")
+    return 0
+
+
 def cmd_probe(args: argparse.Namespace) -> int:
     import librosa
 
@@ -199,6 +247,10 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--n", type=int, default=6)
     pp.add_argument("--thresholds", type=float, nargs="*", default=None)
     pp.set_defaults(func=cmd_probe)
+    pes = sub.add_parser("extract-speaker")
+    pes.add_argument("--match", default=None, help="파일명 부분문자열(NFC) 필터")
+    pes.add_argument("--dt", type=float, default=0.5, help="클러스터 거리 임계")
+    pes.set_defaults(func=cmd_extract_speaker)
     return p
 
 
