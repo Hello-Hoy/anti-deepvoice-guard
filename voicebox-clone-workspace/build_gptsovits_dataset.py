@@ -23,10 +23,14 @@ STAGING = GS / "staging"
 SEG_DIR = STAGING / "segments"
 MANIFEST = STAGING / "segments.json"
 EXPORT_SR = 32000
+PREVIEW = STAGING / "preview"
+REJECT = STAGING / "reject.txt"
+CLEAN_REFS = ["montage_cluster_01.wav", "montage_cluster_05.wav",
+              "montage_cluster_07.wav", "montage_cluster_16.wav"]
 
 
 def _sources(limit: int | None) -> list[Path]:
-    files = sorted(SRC_DIR.glob("*.m4a"))
+    files = sorted(SRC_DIR.rglob("*.m4a"))
     return files[:limit] if limit else files
 
 
@@ -75,6 +79,46 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rebuild_anchor(args: argparse.Namespace) -> int:
+    from resemblyzer import VoiceEncoder, preprocess_wav
+
+    ref_dir = WORK / "jhm_work" / "anchor"
+    enc = VoiceEncoder(device="cpu", verbose=False)
+    embs = []
+    for name in CLEAN_REFS:
+        p = ref_dir / name
+        if not p.exists():
+            raise RuntimeError(f"클린 ref 없음: {p}")
+        embs.append(enc.embed_utterance(preprocess_wav(str(p))))
+    anchor = np.mean(embs, axis=0)
+    anchor = (anchor / (np.linalg.norm(anchor) + 1e-9)).astype(np.float32)
+    np.save(ANCHOR, anchor)
+    log(f"[anchor] 클린 {len(embs)}-ref 평균 → {ANCHOR} (norm={np.linalg.norm(anchor):.3f})")
+    return 0
+
+
+def cmd_montage(args: argparse.Namespace) -> int:
+    entries = G.read_manifest(MANIFEST)
+    entries_sorted = sorted(entries, key=lambda e: e["sim"], reverse=True)
+    PREVIEW.mkdir(parents=True, exist_ok=True)
+    placed = G.build_montage(entries_sorted, SEG_DIR, PREVIEW / "montage_all.wav", sr=EXPORT_SR)
+    (PREVIEW / "timeline.txt").write_text("\n".join(G.timeline_lines(placed)) + "\n", encoding="utf-8")
+    by_src: dict[str, list[dict]] = {}
+    for e in entries_sorted:
+        by_src.setdefault(e["source"], []).append(e)
+    for src, es in by_src.items():
+        safe = "".join(c if c.isalnum() else "_" for c in src)[:60]
+        G.build_montage(es, SEG_DIR, PREVIEW / f"montage_{safe}.wav", sr=EXPORT_SR)
+    if not REJECT.exists():
+        REJECT.write_text(
+            "# 제외할 세그먼트 id를 한 줄에 하나씩 적으세요 (예: jhm_0003).\n"
+            "# '#' 뒤는 주석. preview/timeline.txt로 id↔시각 확인.\n",
+            encoding="utf-8",
+        )
+    log(f"[montage] {len(placed)}개 → {PREVIEW}/montage_all.wav, timeline.txt, reject.txt")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -82,6 +126,8 @@ def build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--threshold", type=float, required=True)
     pe.add_argument("--limit", type=int, default=None)
     pe.set_defaults(func=cmd_extract)
+    sub.add_parser("rebuild-anchor").set_defaults(func=cmd_rebuild_anchor)
+    sub.add_parser("montage").set_defaults(func=cmd_montage)
     return p
 
 

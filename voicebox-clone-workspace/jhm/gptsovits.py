@@ -100,3 +100,33 @@ def save_segments(vocal32: np.ndarray, segs16: list[dict], source: str, out_dir:
         entries.append({"id": sid, "source": source, **meta})
         idx += 1
     return entries
+
+
+def _mmss(sec: float) -> str:
+    m = int(sec // 60)
+    s = sec - m * 60
+    return f"{m:02d}:{s:04.1f}"
+
+
+def timeline_lines(placed: list[dict]) -> list[str]:
+    """montage 배치 정보 → 'mm:ss.s  seg_id  sim=x.xxx  source' 라인."""
+    return [f"{_mmss(p['offset_s'])}  {p['id']}  sim={p['sim']:.3f}  {p['source']}" for p in placed]
+
+
+def build_montage(entries: list[dict], seg_dir: Path, out_wav: Path,
+                  sr: int = 32000, take_s: float = 3.0, gap_s: float = 0.3) -> list[dict]:
+    """세그먼트 앞부분을 이어붙인 미리듣기 wav 생성 + 배치(timeline) 반환."""
+    seg_dir, out_wav = Path(seg_dir), Path(out_wav)
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
+    gap = np.zeros(int(sr * gap_s), np.float32)
+    parts, placed, offset = [], [], 0.0
+    for e in entries:
+        wav, _ = sf.read(str(seg_dir / f"{e['id']}.wav"), dtype="float32")
+        take = wav[: int(sr * take_s)]
+        parts.append(take)
+        parts.append(gap)
+        placed.append({"id": e["id"], "offset_s": round(offset, 1), "sim": e["sim"], "source": e["source"]})
+        offset += (len(take) + len(gap)) / sr
+    y = (np.concatenate(parts) if parts else np.zeros(1, np.float32)).astype(np.float32)
+    sf.write(str(out_wav), y, sr)
+    return placed

@@ -82,3 +82,16 @@ def test_save_segments_writes_wavs_and_manifest(tmp_path):
         assert (tmp_path / f"{e['id']}.wav").exists()
         assert e["source"] == "ep01.m4a"
     assert entries[0]["sim"] == 0.91
+
+
+from jhm.gptsovits import timeline_lines
+
+
+def test_timeline_lines_format():
+    placed = [
+        {"id": "jhm_0001", "offset_s": 0.0, "sim": 0.91, "source": "ep01.m4a"},
+        {"id": "jhm_0002", "offset_s": 3.2, "sim": 0.85, "source": "ep02.m4a"},
+    ]
+    lines = timeline_lines(placed)
+    assert lines[0] == "00:00.0  jhm_0001  sim=0.910  ep01.m4a"
+    assert lines[1] == "00:03.2  jhm_0002  sim=0.850  ep02.m4a"
