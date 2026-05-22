@@ -179,7 +179,8 @@ class DemoAnalysisPipeline(
         val frames = ArrayList<DemoFrame>()
         var t = 0
         while (t <= durationMs) {
-            val vadActive = DemoTimelineMath.vadActiveAt(vadProbs, vadFrameMs, t, 0.5f)
+            val vadLookupMs = if (vadProbs.isEmpty()) t else minOf(t, (vadProbs.size - 1) * vadFrameMs)
+            val vadActive = DemoTimelineMath.vadActiveAt(vadProbs, vadFrameMs, vadLookupMs, 0.5f)
             val stepIdx = DemoTimelineMath.stepHoldIndexAt(stepTimes, t)
             val agg = if (stepIdx >= 0) steps[stepIdx].second else null
             val chars = DemoTimelineMath.transcriptCharsAt(transcript.length, t, durationMs)
