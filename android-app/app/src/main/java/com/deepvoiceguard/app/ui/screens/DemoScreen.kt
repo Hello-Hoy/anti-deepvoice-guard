@@ -51,12 +51,16 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.deepvoiceguard.app.audio.VadEngine
 import com.deepvoiceguard.app.inference.CombinedThreatLevel
 import com.deepvoiceguard.app.inference.DemoAnalysisException
 import com.deepvoiceguard.app.inference.DemoAnalysisPipeline
+import com.deepvoiceguard.app.inference.DemoFrame
 import com.deepvoiceguard.app.inference.DemoResult
 import com.deepvoiceguard.app.inference.DemoScenario
+import com.deepvoiceguard.app.inference.DemoTimeline
 import com.deepvoiceguard.app.inference.OnDeviceEngine
+import com.deepvoiceguard.app.inference.ThreatLevel
 import com.deepvoiceguard.app.phishing.PhishingKeywordDetector
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -113,6 +117,8 @@ fun DemoScreen() {
     var waveform by remember { mutableStateOf(FloatArray(WAVEFORM_BUCKETS)) }
     var transcriptSource by remember { mutableStateOf("") }
     var transcriptShown by remember { mutableStateOf("") }
+    var timeline by remember { mutableStateOf<DemoTimeline?>(null) }
+    var currentFrame by remember { mutableStateOf<DemoFrame?>(null) }
 
     // 엔진 초기화는 asset/ONNX 문제 시 예외를 던질 수 있으므로 구성 시 안전 생성.
     var initError by remember { mutableStateOf<String?>(null) }
@@ -122,8 +128,9 @@ fun DemoScreen() {
             .getOrNull()
     }
     val detector = remember(context) { PhishingKeywordDetector(context) }
-    val pipeline = remember(context, engine, detector) {
-        engine?.let { DemoAnalysisPipeline(context, it, detector) }
+    val vad = remember(context) { runCatching { VadEngine(context) }.getOrNull() }
+    val pipeline = remember(context, engine, detector, vad) {
+        engine?.let { DemoAnalysisPipeline(context, it, detector, vad) }
     }
 
     // MediaPlayer + ticker job은 DisposableEffect로 생명주기 관리.
@@ -147,12 +154,14 @@ fun DemoScreen() {
                     runCatching { it.release() }
                 }
                 engineRef?.let { runCatching { it.close() } }
+                vad?.let { runCatching { it.close() } }
             } else {
                 val cleanupScope = kotlinx.coroutines.MainScope()
                 cleanupScope.launch {
                     try {
                         running.cancelAndJoin()
                         engineRef?.let { runCatching { it.close() } }
+                        vad?.let { runCatching { it.close() } }
                     } finally {
                         cleanupScope.cancel()
                     }
@@ -217,6 +226,8 @@ fun DemoScreen() {
         waveform = FloatArray(WAVEFORM_BUCKETS)
         transcriptSource = ""
         transcriptShown = ""
+        timeline = null
+        currentFrame = null
     }
 
     fun startScenario(scenario: DemoScenario) {
@@ -244,8 +255,8 @@ fun DemoScreen() {
             val transcriptDeferred: Deferred<String> = async(Dispatchers.IO) {
                 loadTranscriptAsset(context, scenario.transcriptAsset)
             }
-            val analysisDeferred: Deferred<Result<DemoResult>> = async(Dispatchers.IO) {
-                runCatching { pipeline.analyze(scenario.audioAsset, scenario.transcriptAsset) }
+            val analysisDeferred: Deferred<Result<DemoTimeline>> = async(Dispatchers.IO) {
+                runCatching { pipeline.buildTimeline(scenario.audioAsset, scenario.transcriptAsset) }
             }
             val playbackDeferred: Deferred<Boolean> = async {
                 startPlayback(
@@ -267,7 +278,14 @@ fun DemoScreen() {
                     onTick = { ratio ->
                         if (stillMine()) {
                             playbackProgress = ratio
-                            transcriptShown = revealTranscriptAtProgress(transcriptSource, ratio)
+                            val tl = timeline
+                            if (tl != null) {
+                                val ms = (ratio * tl.durationMs).toInt()
+                                currentFrame = tl.frameAt(ms)
+                                transcriptShown = tl.transcript.substring(0, currentFrame?.transcriptChars ?: 0)
+                            } else {
+                                transcriptShown = revealTranscriptAtProgress(transcriptSource, ratio)
+                            }
                         }
                     },
                     attachTicker = { job ->
@@ -303,10 +321,10 @@ fun DemoScreen() {
                 return@launch
             }
 
-            val result = analysisOutcome.getOrThrow()
-            ensureActive()
-            if (!stillMine()) return@launch
-            analysisResult = result
+            val tl = analysisOutcome.getOrThrow()
+            ensureActive(); if (!stillMine()) return@launch
+            timeline = tl
+            analysisResult = tl.finalResult
             // 파형/재생 await — CancellationException은 rethrow, 그 외 실패는 기본값으로 진행.
             // runCatching은 CancellationException도 Result.failure로 포장하여 상위 활성 검사를 우회하므로 사용 금지.
             val waveformResult = try {
@@ -333,9 +351,10 @@ fun DemoScreen() {
             phase = DemoPhase.REVEALING
             // 재생 성공 시에만 progress bar를 완료로 채운다. 실패했다면 실제 멈춘 지점을 유지.
             if (playbackOk) playbackProgress = 1f
-            transcriptShown = result.transcript
+            transcriptShown = tl.transcript
             ensureActive()
             if (!stillMine()) return@launch
+            if (stillMine()) currentFrame = tl.frames.lastOrNull()
             phase = DemoPhase.DONE
             if (!playbackOk) {
                 errorMessage = "오디오 재생에 실패했으나 분석은 완료됨"
@@ -372,10 +391,13 @@ fun DemoScreen() {
             Spacer(modifier = Modifier.height(12.dp))
 
             val result = analysisResult
-            if (transcriptShown.isNotBlank() && phase == DemoPhase.PLAYING) {
-                DemoLiveTranscriptCard(
-                    result = result,
+            val frame = currentFrame
+            if (phase == DemoPhase.PLAYING && frame != null) {
+                DemoLiveMetrics(
+                    frame = frame,
+                    vadAvailable = timeline?.vadAvailable == true,
                     transcriptShown = transcriptShown,
+                    result = analysisResult,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -611,6 +633,54 @@ private fun DemoLiveTranscriptCard(
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun DemoLiveMetrics(
+    frame: DemoFrame,
+    vadAvailable: Boolean,
+    transcriptShown: String,
+    result: DemoResult?,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "통합 위협: ${frame.threatLevel}",
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleMedium,
+                color = threatColor(frame.threatLevel),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (!vadAvailable) "🎙 VAD: N/A"
+                       else if (frame.vadActive) "🎙 발화 감지 중" else "⏸ 무음",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (frame.vadActive) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("딥보이스 점수: ${(frame.fakeScore * 100).toInt()}% (${frame.deepfakeLevel})")
+            LinearProgressIndicator(
+                progress = { frame.fakeScore.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+                color = if (frame.fakeScore > 0.7f) Color.Red else MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("피싱 점수: ${(frame.phishingScore * 100).toInt()}%")
+            LinearProgressIndicator(
+                progress = { frame.phishingScore.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+                color = if (frame.phishingScore > 0.3f) Color(0xFFF57F17) else MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("실시간 STT", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            val highlightTerms = result?.let { phishingHighlightTerms(it) }.orEmpty()
+            Text(text = highlightKeywords(transcriptShown, highlightTerms), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
