@@ -98,6 +98,10 @@ private val demoScenarios = listOf(
         "demo/demo_07_scenario2_real_voice_phishing_transcript.txt",
         "WARNING",
     ),
+    DemoScenario(8, "전현무 사칭 촬영요청(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화",
+        "demo/demo_08.wav", "demo/demo_08_transcript.txt", "WARNING"),
+    DemoScenario(9, "전현무 사칭 메뉴요청(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화",
+        "demo/demo_09.wav", "demo/demo_09_transcript.txt", "WARNING"),
 )
 
 private const val WAVEFORM_BUCKETS = 60
@@ -596,45 +600,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBar(
         topLeft = Offset(x, centerY - height / 2),
         size = Size(width, height),
     )
-}
-
-@Composable
-private fun DemoLiveTranscriptCard(
-    result: DemoResult?,
-    transcriptShown: String,
-) {
-    val highlightTerms = result?.let { phishingHighlightTerms(it) }.orEmpty()
-    val visibleKeywords = visibleKeywordLabels(result, transcriptShown)
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "실시간 STT 전사",
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = highlightKeywords(transcriptShown, highlightTerms),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (visibleKeywords.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "키워드 감지: ${visibleKeywords.joinToString(", ")}",
-                    color = Color.Red,
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
-    }
 }
 
 @Composable
