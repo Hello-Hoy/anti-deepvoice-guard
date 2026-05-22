@@ -180,16 +180,18 @@ if __name__ == "__main__":
 def requirements_text() -> str:
     return "\n".join([
         "torch", "torchaudio", "demucs", "librosa", "soundfile",
-        "numpy", "resemblyzer", "faster-whisper", "scikit-learn",
+        "numpy", "scikit-learn", "speechbrain", "faster-whisper",
     ]) + "\n"
 
 
-def readme_text(n_segments: int, total_min: float, threshold: float) -> str:
+def readme_text(n_segments: int, total_min: float, dt: float) -> str:
     return f"""# 전현무 GPT-SoVITS 데이터셋
 
 - 세그먼트: {n_segments}개 / 약 {total_min:.1f}분 (32kHz mono)
-- 추출 임계(anchor sim): {threshold}
 - 라벨 파일: `jhm.list` (형식: `상대경로|jhm|ko|전사`)
+- 추출 방식: demucs 보컬분리 → Silero VAD 발화분할 → ECAPA-TDNN 화자 임베딩
+  → agglomerative 클러스터(거리임계 dt={dt}) → 최대 분량 클러스터(=전현무) 채택.
+  단독 발화 위주 소스(강연·토크)에서만 사용. 빠른 컷 예능은 화자 혼입으로 부적합.
 
 ## Windows GPT-SoVITS 사용
 1. 이 폴더를 GPT-SoVITS 작업 위치로 복사.
@@ -198,9 +200,10 @@ def readme_text(n_segments: int, total_min: float, threshold: float) -> str:
 3. GPT-SoVITS WebUI에서 라벨 파일=`jhm.abs.list`, 오디오 폴더=`wavs/` 지정 후 학습.
 
 ## 재추출(선택)
-`jhm/`, `build_gptsovits_dataset.py`, `jhm_work/anchor/anchor.npy`를 함께 복사하고
-`pip install -r requirements.txt` 후:
-`python build_gptsovits_dataset.py rebuild-anchor && python build_gptsovits_dataset.py extract --threshold {threshold}`
+`jhm/`, `build_gptsovits_dataset.py`를 함께 복사하고 `전현무음성/`에 소스 m4a를 둔 뒤
+`pip install -r requirements.txt` 후 (단독 발화 소스만):
+`python build_gptsovits_dataset.py extract-speaker --match "<파일명일부>" --dt {dt}`
+이어 `python build_gptsovits_dataset.py finalize` 로 전사·.list 생성.
 """
 
 
