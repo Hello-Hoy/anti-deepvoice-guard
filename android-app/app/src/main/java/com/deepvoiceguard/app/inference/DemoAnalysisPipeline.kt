@@ -21,6 +21,7 @@ class DemoAnalysisPipeline(
     private val context: Context,
     private val inferenceEngine: InferenceEngine,
     private val phishingDetector: PhishingKeywordDetector,
+    private val vadEngine: com.deepvoiceguard.app.audio.VadEngine? = null,
 ) {
 
     private val combinedAggregator = CombinedThreatAggregator()
@@ -111,6 +112,117 @@ class DemoAnalysisPipeline(
             transcript = transcript,
             audioLoaded = true,
         )
+    }
+
+    /**
+     * 재생 동기 replay용 타임라인. VAD(32ms 프레임) + 딥보이스(1초 슬라이딩 윈도우 누적)
+     * + 100ms 격자별 피싱/통합위협. fail-closed는 analyze와 동일.
+     */
+    @Throws(DemoAnalysisException::class)
+    suspend fun buildTimeline(
+        audioAssetPath: String,
+        transcriptAssetPath: String? = null,
+    ): DemoTimeline {
+        val audio = loadWavFromAssets(audioAssetPath)
+            ?: throw DemoAnalysisException("오디오 asset을 찾을 수 없습니다: $audioAssetPath", DemoFailureReason.AUDIO_MISSING)
+        if (!inferenceEngine.isReady()) {
+            throw DemoAnalysisException("추론 엔진이 준비되지 않았습니다", DemoFailureReason.ENGINE_NOT_READY)
+        }
+        val sr = 16000
+        val durationMs = (audio.size * 1000L / sr).toInt().coerceAtLeast(DemoTimelineMath.FRAME_MS)
+
+        // 1) 딥보이스 1초 슬라이딩 윈도우 누적
+        val stepMs = 1000
+        val win = 64_600
+        val steps = ArrayList<Pair<Int, AggregatedResult>>()
+        val aggregator = DetectionAggregator()
+        try {
+            var endSample = stepMs * sr / 1000
+            while (true) {
+                val e = minOf(endSample, audio.size)
+                val window = DemoTimelineMath.windowEndingAt(audio, e, win)
+                val agg = aggregator.add(inferenceEngine.detect(window))
+                steps.add((e * 1000L / sr).toInt() to agg)
+                if (e >= audio.size) break
+                endSample += stepMs * sr / 1000
+            }
+        } catch (ex: Exception) {
+            throw DemoAnalysisException("AASIST 추론 실패: ${ex.message}", DemoFailureReason.INFERENCE_FAILED, ex)
+        }
+        val stepTimes = IntArray(steps.size) { steps[it].first }
+
+        // 2) VAD 프레임별 speechProb (엔진 실패는 비치명)
+        var vadAvailable = false
+        val vadProbs: FloatArray = try {
+            vadEngine?.let { engine ->
+                engine.reset()
+                val frameLen = 512
+                val n = audio.size / frameLen
+                FloatArray(n) { i ->
+                    engine.process(audio.copyOfRange(i * frameLen, i * frameLen + frameLen))
+                }.also { vadAvailable = true }
+            } ?: FloatArray(0)
+        } catch (_: Exception) {
+            vadAvailable = false
+            FloatArray(0)
+        }
+        val vadFrameMs = 512 * 1000 / sr
+
+        // 3) 전사 (fail-closed)
+        val transcript = if (transcriptAssetPath != null) {
+            val loaded = loadTextFromAssets(transcriptAssetPath)
+            if (loaded.isBlank()) throw DemoAnalysisException("전사본을 읽을 수 없거나 비어 있습니다: $transcriptAssetPath", DemoFailureReason.TRANSCRIPT_MISSING)
+            loaded
+        } else ""
+
+        // 4) 100ms 격자 frame 생성
+        val frames = ArrayList<DemoFrame>()
+        var t = 0
+        while (t <= durationMs) {
+            val vadActive = DemoTimelineMath.vadActiveAt(vadProbs, vadFrameMs, t, 0.5f)
+            val stepIdx = DemoTimelineMath.stepHoldIndexAt(stepTimes, t)
+            val agg = if (stepIdx >= 0) steps[stepIdx].second else null
+            val chars = DemoTimelineMath.transcriptCharsAt(transcript.length, t, durationMs)
+            val revealed = transcript.substring(0, chars)
+            val phishing = if (revealed.isNotBlank()) phishingDetector.analyze(revealed) else null
+            val combined = combinedAggregator.combine(
+                deepfakeResult = agg,
+                phishingResult = phishing,
+                sttStatus = if (revealed.isNotBlank()) SttStatus.LISTENING else SttStatus.UNAVAILABLE,
+                transcription = revealed,
+            )
+            frames.add(
+                DemoFrame(
+                    offsetMs = t,
+                    vadActive = vadActive,
+                    fakeScore = agg?.averageFakeScore ?: 0f,
+                    deepfakeLevel = agg?.threatLevel ?: ThreatLevel.SAFE,
+                    phishingScore = combined.phishingScore,
+                    threatLevel = combined.combinedThreatLevel,
+                    transcriptChars = chars,
+                )
+            )
+            t += DemoTimelineMath.FRAME_MS
+        }
+
+        // 5) 최종 요약
+        val lastAgg = steps.lastOrNull()?.second
+        val finalPhishing = if (transcript.isNotBlank()) phishingDetector.analyze(transcript) else null
+        val finalCombined = combinedAggregator.combine(
+            deepfakeResult = lastAgg,
+            phishingResult = finalPhishing,
+            sttStatus = if (transcript.isNotBlank()) SttStatus.LISTENING else SttStatus.UNAVAILABLE,
+            transcription = transcript,
+        )
+        val finalResult = DemoResult(
+            deepfakeResult = lastAgg,
+            phishingResult = finalPhishing,
+            combinedResult = finalCombined,
+            transcript = transcript,
+            audioLoaded = true,
+        )
+
+        return DemoTimeline(durationMs, frames, transcript, vadAvailable, finalResult)
     }
 
     /** 주어진 asset 경로의 파일이 실제로 존재하는지 확인한다. */
