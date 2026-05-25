@@ -8,6 +8,17 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.pow
+
+/** 데모 표시 전용 피싱 점수 곡선 지수(>1일수록 초반 상승이 완만). 진행률 1.0은 보존되어 최종값은 유지. */
+private const val PHISHING_DEMO_GAMMA = 1.5f
+
+/**
+ * 표시 점수 EMA 평활 계수(0~1, 작을수록 더 부드럽고 느리게 따라감).
+ * 키워드가 통화 후반에 몰려 목표가 급변해도 표시 점수가 계단식으로 튀지 않게 한다.
+ * 100ms 프레임 기준 0.05 ≈ 시정수 2초.
+ */
+private const val PHISHING_SMOOTH_ALPHA = 0.05f
 
 /**
  * 데모용 파일 분석 파이프라인.
@@ -25,6 +36,14 @@ class DemoAnalysisPipeline(
 ) {
 
     private val combinedAggregator = CombinedThreatAggregator()
+
+    // 데모 표시 전용: 실시간 피싱 점수를 raw 가중치 합(키워드 2개째에 급등)이 아니라
+    // "매칭된 키워드 누적 개수 / 전체 매칭 개수"의 완만한 곡선으로 표시한다.
+    // 키워드가 하나씩 늘 때마다 점진적으로 오르고, 전체 매칭 시 100%에 도달. detector/통합 로직은 불변.
+    private fun demoPhishingProgress(matched: Int, total: Int): Float {
+        if (total <= 0 || matched <= 0) return 0f
+        return (matched.toFloat() / total).coerceIn(0f, 1f).pow(PHISHING_DEMO_GAMMA)
+    }
 
     /**
      * 데모 시나리오를 분석한다.
@@ -175,9 +194,14 @@ class DemoAnalysisPipeline(
             loaded
         } else ""
 
+        // 전체 전사 기준 매칭 키워드 수(표시 점수의 분모) — 키워드 누적 진행률 계산에 사용.
+        val fullPhishing = if (transcript.isNotBlank()) phishingDetector.analyze(transcript) else null
+        val totalKeywords = fullPhishing?.matchedKeywords?.size ?: 0
+
         // 4) 100ms 격자 frame 생성
         val frames = ArrayList<DemoFrame>()
         var t = 0
+        var phishingDisplay = 0f  // 키워드 진행률 target을 EMA로 부드럽게 따라가는 표시값
         while (t <= durationMs) {
             val vadLookupMs = if (vadProbs.isEmpty()) t else minOf(t, (vadProbs.size - 1) * vadFrameMs)
             val vadActive = DemoTimelineMath.vadActiveAt(vadProbs, vadFrameMs, vadLookupMs, 0.5f)
@@ -192,13 +216,16 @@ class DemoAnalysisPipeline(
                 sttStatus = if (revealed.isNotBlank()) SttStatus.LISTENING else SttStatus.UNAVAILABLE,
                 transcription = revealed,
             )
+            // 목표(키워드 누적 진행률)를 EMA로 부드럽게 따라가 계단식 급등을 제거.
+            val phishingTarget = demoPhishingProgress(phishing?.matchedKeywords?.size ?: 0, totalKeywords)
+            phishingDisplay += (phishingTarget - phishingDisplay) * PHISHING_SMOOTH_ALPHA
             frames.add(
                 DemoFrame(
                     offsetMs = t,
                     vadActive = vadActive,
                     fakeScore = agg?.averageFakeScore ?: 0f,
                     deepfakeLevel = agg?.threatLevel ?: ThreatLevel.SAFE,
-                    phishingScore = combined.phishingScore,
+                    phishingScore = phishingDisplay,
                     threatLevel = combined.combinedThreatLevel,
                     transcriptChars = chars,
                 )
@@ -208,7 +235,7 @@ class DemoAnalysisPipeline(
 
         // 5) 최종 요약
         val lastAgg = steps.lastOrNull()?.second
-        val finalPhishing = if (transcript.isNotBlank()) phishingDetector.analyze(transcript) else null
+        val finalPhishing = fullPhishing
         val finalCombined = combinedAggregator.combine(
             deepfakeResult = lastAgg,
             phishingResult = finalPhishing,
