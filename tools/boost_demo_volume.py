@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "android-app/app/src/main/assets/demo"
 TARGET_PEAK = 0.97
 # 부스트 대상: GPT-SoVITS 데모만(점수 안정). 나머지는 진폭↑ 시 탐지가 깨져 제외.
-TARGETS = ["demo_08.wav", "demo_09.wav"]
+TARGETS = ["demo_08.wav", "demo_09.wav", "demo_10.wav"]
 
 
 def load(f):

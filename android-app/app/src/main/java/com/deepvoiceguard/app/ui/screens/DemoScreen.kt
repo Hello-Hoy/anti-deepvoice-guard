@@ -19,10 +19,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,6 +106,8 @@ private val demoScenarios = listOf(
         "demo/demo_08.wav", "demo/demo_08_transcript.txt", "WARNING"),
     DemoScenario(9, "전현무 사칭 메뉴요청(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화",
         "demo/demo_09.wav", "demo/demo_09_transcript.txt", "WARNING"),
+    DemoScenario(10, "전현무 사칭 예약금 피싱(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화 풀버전",
+        "demo/demo_10.wav", "demo/demo_10_transcript.txt", "WARNING"),
 )
 
 private const val WAVEFORM_BUCKETS = 60
@@ -638,7 +643,18 @@ private fun DemoLiveMetrics(
             Spacer(modifier = Modifier.height(8.dp))
             Text("실시간 STT", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             val highlightTerms = result?.let { phishingHighlightTerms(it) }.orEmpty()
-            Text(text = highlightKeywords(transcriptShown, highlightTerms), style = MaterialTheme.typography.bodyMedium)
+            // 전사가 길어지면 고정 높이 박스 안에서 스크롤되고, 새 글자가 들어올 때마다 맨 아래로 따라감.
+            // (점수 지표는 이 박스 위에 있어 항상 보임)
+            val sttScroll = rememberScrollState()
+            LaunchedEffect(transcriptShown) { sttScroll.animateScrollTo(sttScroll.maxValue) }
+            Text(
+                text = highlightKeywords(transcriptShown, highlightTerms),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 120.dp)
+                    .verticalScroll(sttScroll),
+            )
         }
     }
 }
@@ -772,9 +788,16 @@ private fun DemoResultCard(
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.labelMedium,
                 )
+                // 재생 종료 후 사용자가 처음부터 끝까지 직접 스크롤해 전체 스크립트를 확인.
+                // (auto-scroll 없이 맨 위에서 시작 → 고정 높이 박스 안에서 수동 스크롤)
+                val resultScroll = rememberScrollState()
                 Text(
                     text = highlightKeywords(transcriptShown, highlightTerms),
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp)
+                        .verticalScroll(resultScroll),
                 )
             }
         }
