@@ -8,17 +8,15 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.pow
-
-/** 데모 표시 전용 피싱 점수 곡선 지수(>1일수록 초반 상승이 완만). 진행률 1.0은 보존되어 최종값은 유지. */
-private const val PHISHING_DEMO_GAMMA = 1.5f
 
 /**
- * 표시 점수 EMA 평활 계수(0~1, 작을수록 더 부드럽고 느리게 따라감).
- * 키워드가 통화 후반에 몰려 목표가 급변해도 표시 점수가 계단식으로 튀지 않게 한다.
- * 100ms 프레임 기준 0.05 ≈ 시정수 2초.
+ * 딥보이스 표시 바 전용 EMA 평활 계수. 모델이 real 통화의 일부 구간을 borderline(0.5~0.6)으로
+ * 내며 표시 바가 통화 중간에 과하게 솟는 것(예: #5 은행정상 ~0.54)을 완만하게 낮춘다.
+ * **표시값만** 평활한다 — 딥보이스 위협등급은 raw 점수로 판정해 불변.
+ * α=0.04(시정수 ≈2.5초)면 문장 사이 묵음/숨 구간에서 fakeScore가 0.4~0.5로 잠깐 꺼져도
+ * 표시 점수가 급락하지 않아(예: demo_11) 출렁임이 크게 줄고, 지속적 딥보이스는 0.9대를 유지한다.
  */
-private const val PHISHING_SMOOTH_ALPHA = 0.05f
+private const val DEEPVOICE_SMOOTH_ALPHA = 0.04f
 
 /**
  * 데모용 파일 분석 파이프라인.
@@ -37,12 +35,13 @@ class DemoAnalysisPipeline(
 
     private val combinedAggregator = CombinedThreatAggregator()
 
-    // 데모 표시 전용: 실시간 피싱 점수를 raw 가중치 합(키워드 2개째에 급등)이 아니라
-    // "매칭된 키워드 누적 개수 / 전체 매칭 개수"의 완만한 곡선으로 표시한다.
-    // 키워드가 하나씩 늘 때마다 점진적으로 오르고, 전체 매칭 시 100%에 도달. detector/통합 로직은 불변.
-    private fun demoPhishingProgress(matched: Int, total: Int): Float {
-        if (total <= 0 || matched <= 0) return 0f
-        return (matched.toFloat() / total).coerceIn(0f, 1f).pow(PHISHING_DEMO_GAMMA)
+    // 데모 표시 전용: 평활된 딥보이스 표시 점수로 등급을 매겨 점수-등급-통합을 한 화면에서 일치시킨다.
+    // 임계는 DetectionAggregator(danger 0.9 / warning 0.7 / caution 0.6)와 동일.
+    private fun deepfakeLevelFromScore(score: Float): ThreatLevel = when {
+        score > 0.9f -> ThreatLevel.DANGER
+        score > 0.7f -> ThreatLevel.WARNING
+        score > 0.6f -> ThreatLevel.CAUTION
+        else -> ThreatLevel.SAFE
     }
 
     /**
@@ -194,14 +193,18 @@ class DemoAnalysisPipeline(
             loaded
         } else ""
 
-        // 전체 전사 기준 매칭 키워드 수(표시 점수의 분모) — 키워드 누적 진행률 계산에 사용.
+        // 최종 요약(결과 카드)용 전체 전사 분석.
         val fullPhishing = if (transcript.isNotBlank()) phishingDetector.analyze(transcript) else null
-        val totalKeywords = fullPhishing?.matchedKeywords?.size ?: 0
 
         // 4) 100ms 격자 frame 생성
         val frames = ArrayList<DemoFrame>()
         var t = 0
-        var phishingDisplay = 0f  // 키워드 진행률 target을 EMA로 부드럽게 따라가는 표시값
+        var deepfakeDisplay = 0f  // 딥보이스 표시 점수: raw averageFakeScore를 EMA로 완만하게 따라감
+        // 표시 일관성 원칙(사용자 피드백 반영):
+        //  - 딥보이스 점수(완만)와 괄호 등급·통합 위협을 **모두 표시 점수 기준**으로 산출해 일치시킨다.
+        //    (점수는 리니어하게 오르는데 등급만 raw로 갑자기 DANGER로 튀던 어색함 제거.)
+        //  - 피싱 점수는 진행률이 아니라 현재까지 전사의 **실제 score**를 그대로 반영한다(결과 카드와 동일).
+        //  - 통합은 latching 없이 매 프레임 의사결정 테이블 반영. 최종 요약만 worstAgg로 산출(아래 5)).
         while (t <= durationMs) {
             val vadLookupMs = if (vadProbs.isEmpty()) t else minOf(t, (vadProbs.size - 1) * vadFrameMs)
             val vadActive = DemoTimelineMath.vadActiveAt(vadProbs, vadFrameMs, vadLookupMs, 0.5f)
@@ -210,22 +213,31 @@ class DemoAnalysisPipeline(
             val chars = DemoTimelineMath.transcriptCharsAt(transcript.length, t, durationMs)
             val revealed = transcript.substring(0, chars)
             val phishing = if (revealed.isNotBlank()) phishingDetector.analyze(revealed) else null
+
+            // 딥보이스 표시 점수를 먼저 EMA로 완만하게 갱신한 뒤, 그 표시 점수로 등급을 매긴다.
+            val deepfakeTarget = agg?.averageFakeScore ?: 0f
+            deepfakeDisplay += (deepfakeTarget - deepfakeDisplay) * DEEPVOICE_SMOOTH_ALPHA
+            val displayLevel = deepfakeLevelFromScore(deepfakeDisplay)
+            // 통합 위협도 표시 등급 기준으로 산출(점수·괄호등급·통합을 한 화면에서 일치시키기 위함).
+            val displayAgg = agg?.let {
+                AggregatedResult(displayLevel, deepfakeDisplay, it.latestResult, it.consecutiveHighCount)
+            }
+            // 피싱 실시간 점수 = 현재까지 전사의 실제 score. 키워드/금액이 탐지되는 순간 그 값으로
+            // 오르고, 추가 신호가 없으면 변동 없이 유지된다(결과 카드 score와 동일 기준).
+            val phishingNow = phishing?.score ?: 0f
             val combined = combinedAggregator.combine(
-                deepfakeResult = agg,
+                deepfakeResult = displayAgg,
                 phishingResult = phishing,
                 sttStatus = if (revealed.isNotBlank()) SttStatus.LISTENING else SttStatus.UNAVAILABLE,
                 transcription = revealed,
             )
-            // 목표(키워드 누적 진행률)를 EMA로 부드럽게 따라가 계단식 급등을 제거.
-            val phishingTarget = demoPhishingProgress(phishing?.matchedKeywords?.size ?: 0, totalKeywords)
-            phishingDisplay += (phishingTarget - phishingDisplay) * PHISHING_SMOOTH_ALPHA
             frames.add(
                 DemoFrame(
                     offsetMs = t,
                     vadActive = vadActive,
-                    fakeScore = agg?.averageFakeScore ?: 0f,
-                    deepfakeLevel = agg?.threatLevel ?: ThreatLevel.SAFE,
-                    phishingScore = phishingDisplay,
+                    fakeScore = deepfakeDisplay,
+                    deepfakeLevel = displayLevel,
+                    phishingScore = phishingNow,
                     threatLevel = combined.combinedThreatLevel,
                     transcriptChars = chars,
                 )
@@ -234,7 +246,13 @@ class DemoAnalysisPipeline(
         }
 
         // 5) 최종 요약
-        val lastAgg = steps.lastOrNull()?.second
+        // 마지막 스텝이 아니라 통화 전체에서 가장 위협이 높았던 스텝(worstAgg)을 요약 딥보이스로
+        // 삼는다. 묵음/저에너지 꼬리 윈도우가 결과 카드의 등급·점수를 낮추는 것을 방지.
+        // tie는 동일 등급 내 평균 fakeScore가 높은 쪽.
+        val worstAgg = steps.maxWithOrNull(
+            compareBy({ it.second.threatLevel.ordinal }, { it.second.averageFakeScore })
+        )?.second
+        val lastAgg = worstAgg
         val finalPhishing = fullPhishing
         val finalCombined = combinedAggregator.combine(
             deepfakeResult = lastAgg,

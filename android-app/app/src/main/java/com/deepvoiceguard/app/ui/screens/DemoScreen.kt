@@ -3,6 +3,7 @@ package com.deepvoiceguard.app.ui.screens
 import android.content.res.AssetFileDescriptor
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.audiofx.LoudnessEnhancer
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -85,10 +86,12 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
+import kotlin.math.log10
 import kotlin.math.min
+import kotlin.math.sqrt
 
 private val demoScenarios = listOf(
-    DemoScenario(1, "일상 통화", "실제 사람의 일상 대화", "demo/demo_01.wav", "demo/demo_01_transcript.txt", "SAFE"),
+    DemoScenario(1, "일상 통화", "실제 사람의 일상 대화", "demo/demo_01.wav", "demo/demo_01_transcript.txt", "CAUTION"),
     DemoScenario(2, "TTS 일상 대화", "AI 생성 음성 (일상 대화)", "demo/demo_02.wav", "demo/demo_02_transcript.txt", "DANGER"),
     DemoScenario(3, "실제 사람 피싱", "사람이 읽는 피싱 스크립트", "demo/demo_03.wav", "demo/demo_03_transcript.txt", "WARNING"),
     DemoScenario(4, "TTS 피싱", "AI 생성 음성 + 피싱 스크립트", "demo/demo_04.wav", "demo/demo_04_transcript.txt", "CRITICAL"),
@@ -103,15 +106,31 @@ private val demoScenarios = listOf(
         "WARNING",
     ),
     DemoScenario(8, "전현무 사칭 촬영요청(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화",
-        "demo/demo_08.wav", "demo/demo_08_transcript.txt", "WARNING"),
+        "demo/demo_08.wav", "demo/demo_08_transcript.txt", "DANGER"),
     DemoScenario(9, "전현무 사칭 메뉴요청(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화",
-        "demo/demo_09.wav", "demo/demo_09_transcript.txt", "WARNING"),
+        "demo/demo_09.wav", "demo/demo_09_transcript.txt", "DANGER"),
     DemoScenario(10, "전현무 사칭 예약금 피싱(AI)", "GPT-SoVITS 합성 음성 — 사칭 통화 풀버전",
-        "demo/demo_10.wav", "demo/demo_10_transcript.txt", "WARNING"),
+        "demo/demo_10.wav", "demo/demo_10_transcript.txt", "CRITICAL"),
+    DemoScenario(11, "양정윤 사칭 지원금 요구(AI)", "GPT-SoVITS 합성 음성 — 교수 대상 지원금 송금 유도",
+        "demo/demo_11.wav", "demo/demo_11_transcript.txt", "DANGER"),
 )
 
 private const val WAVEFORM_BUCKETS = 60
 private const val PLAYBACK_TICK_MS = 60L
+
+// 데모 재생 음량 보정 목표(RMS dBFS). 조용히 녹음된 데모(약 -30dBFS)를 이 수준까지 끌어올린다.
+// LoudnessEnhancer는 makeup gain + 리미터라 이미 큰 데모(8/9/10, ~-17dBFS)는 거의 그대로 둔다.
+// ⚠ 탐지 입력 WAV는 절대 건드리지 않는다 — real 음성을 키우면 AASIST가 전부 딥보이스로 오탐함
+// (peak 0.97 정규화 시 #1·3·5·6·7 모두 DANGER로 실측 확인). 그래서 재생단에서만 증폭한다.
+private const val DEMO_TARGET_RMS_DBFS = -16f
+private const val DEMO_MAX_GAIN_MB = 2000  // 상한 +20dB
+
+// 재생 음량 증폭(LoudnessEnhancer/AudioEffect) on/off.
+// ⚠ 일부 환경(특히 에뮬레이터)에서 LoudnessEnhancer를 audio session에 부착하면 effect가
+// started 되지 않고(AudioFlinger "0 effects started") 재생이 **무음**으로 나오는 회귀가 확인됨.
+// 음성 출력이 음량 보정보다 우선이므로 기본 비활성화한다(원음 그대로 재생, WAV는 불변).
+// 조용한 데모는 기기 미디어 볼륨으로 보완. 추후 기기 화이트리스트/안전부착으로 재도입 가능.
+private const val DEMO_PLAYBACK_GAIN_ENABLED = false
 
 private enum class DemoPhase { IDLE, PREPARING, PLAYING, REVEALING, DONE }
 
@@ -910,8 +929,16 @@ private suspend fun startPlayback(
     // IO 준비 단계와 Main 재생 단계 사이에 취소가 발생해도 MediaPlayer가 leak되지 않도록
     // 외부 holder에 참조를 유지하고, outer finally에서 잔여 player를 반드시 해제한다.
     val holder = AtomicReference<MediaPlayer?>(null)
+    // 재생 증폭용 LoudnessEnhancer — mp와 동일 생명주기로 outer finally에서 함께 해제.
+    val fxHolder = AtomicReference<LoudnessEnhancer?>(null)
     try {
         val prepared = withContext(Dispatchers.IO) {
+            // 탐지가 아니라 재생만 키우기 위한 적응형 게인 산출(원본 asset 불변).
+            // ⚠ 반드시 openFd(afd) **이전에**, 그리고 effect 활성 시에만 계산한다.
+            // 같은 asset을 openFd로 연 상태에서 computePlaybackGainMb가 assets.open으로 다시
+            // 읽으면 공유 file descriptor의 read 위치가 어긋나, 이후 setDataSource(afd…)가
+            // 잘못된 데이터를 읽어 **전체 데모가 무음**이 되는 회귀가 있었다(effect on/off 무관).
+            val gainMb = if (DEMO_PLAYBACK_GAIN_ENABLED) computePlaybackGainMb(context, assetPath) else 0
             val afd: AssetFileDescriptor = try {
                 context.assets.openFd(assetPath)
             } catch (_: Exception) {
@@ -931,6 +958,16 @@ private suspend fun startPlayback(
                 val duration = mp.duration.coerceAtLeast(1)
                 holder.set(mp) // outer finally가 볼 수 있도록 먼저 등록.
                 ownershipTransferred = true
+                // 음량 증폭 부착(실패해도 비치명 — 원래 음량으로 재생 지속).
+                // ⚠ DEMO_PLAYBACK_GAIN_ENABLED=false면 부착 자체를 건너뛴다(에뮬 무음 회귀 회피).
+                if (DEMO_PLAYBACK_GAIN_ENABLED && gainMb > 0) {
+                    runCatching {
+                        LoudnessEnhancer(mp.audioSessionId).apply {
+                            setTargetGain(gainMb)
+                            enabled = true
+                        }
+                    }.getOrNull()?.let { fxHolder.set(it) }
+                }
                 mp to duration
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
@@ -991,6 +1028,8 @@ private suspend fun startPlayback(
         }
     } finally {
         // IO/Main 사이 취소, Main 내부 취소/에러 등 모든 경로에서 단일 지점에서 해제.
+        // 오디오 이펙트는 player보다 먼저 해제(player session 해제 전).
+        fxHolder.getAndSet(null)?.let { runCatching { it.release() } }
         val leaked = holder.getAndSet(null)
         if (leaked != null) {
             runCatching { if (leaked.isPlaying) leaked.stop() }
@@ -1024,6 +1063,35 @@ private fun findWavDataChunk(bytes: ByteArray): Pair<Int, Int>? {
         offset = dataStart + size + (size and 1) // word-align
     }
     return null
+}
+
+/**
+ * 데모 WAV의 RMS를 측정해 [DEMO_TARGET_RMS_DBFS]까지 끌어올리는 재생 makeup gain(mB)을 산출.
+ * boost 전용(0 미만으로 줄이지 않음) — 큰 데모는 0에 가까운 게인이라 사실상 원음 유지.
+ * 산출값은 LoudnessEnhancer.setTargetGain에 쓰이며 탐지 입력 WAV에는 전혀 영향이 없다.
+ */
+private fun computePlaybackGainMb(context: android.content.Context, assetPath: String): Int {
+    return try {
+        val bytes = context.assets.open(assetPath).use { it.readBytes() }
+        val (dataStart, dataSize) = findWavDataChunk(bytes) ?: return 0
+        if (dataSize < 2) return 0
+        val buffer = ByteBuffer.wrap(bytes, dataStart, dataSize).order(ByteOrder.LITTLE_ENDIAN)
+        var sumSq = 0.0
+        var count = 0L
+        while (buffer.remaining() >= 2) {
+            val s = buffer.short.toDouble() / 32768.0
+            sumSq += s * s
+            count++
+        }
+        if (count == 0L) return 0
+        val rms = sqrt(sumSq / count)
+        if (rms <= 0.0) return 0
+        val rmsDb = 20.0 * log10(rms)
+        val gainDb = (DEMO_TARGET_RMS_DBFS - rmsDb).toDouble().coerceIn(0.0, DEMO_MAX_GAIN_MB / 100.0)
+        (gainDb * 100).toInt().coerceIn(0, DEMO_MAX_GAIN_MB)
+    } catch (_: Exception) {
+        0
+    }
 }
 
 /** WAV asset에서 16-bit PCM 샘플을 파싱해 WAVEFORM_BUCKETS 크기 진폭 배열로 다운샘플링한다. */

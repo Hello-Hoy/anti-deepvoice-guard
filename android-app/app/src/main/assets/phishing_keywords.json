@@ -18,6 +18,7 @@
     {"keyword": "오늘 안에", "category": "URGENCY", "weight": 0.2, "synonyms": ["오늘 중으로", "금일 내"]},
     {"keyword": "시간이 없", "category": "URGENCY", "weight": 0.2, "synonyms": ["시간 없"]},
 
+    {"keyword": "계좌", "category": "FINANCIAL_ACTION", "weight": 0.2, "synonyms": ["통장"]},
     {"keyword": "계좌이체", "category": "FINANCIAL_ACTION", "weight": 0.4, "synonyms": ["계좌 이체", "송금", "이체"]},
     {"keyword": "현금 인출", "category": "FINANCIAL_ACTION", "weight": 0.4, "synonyms": ["현금인출", "출금", "인출"]},
     {"keyword": "atm", "category": "FINANCIAL_ACTION", "weight": 0.3, "synonyms": ["현금인출기", "자동화기기"]},
