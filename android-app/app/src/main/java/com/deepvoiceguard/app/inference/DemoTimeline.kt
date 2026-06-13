@@ -52,6 +52,65 @@ object DemoTimelineMath {
         return (length * ratio).toInt().coerceIn(0, length)
     }
 
+    /**
+     * 발화 구간 끝(plainText 내 누적 글자 인덱스 charEnd)에 해당하는 시각 범위.
+     * STT 세그먼트 타임스탬프를 받아 자막을 실제 발화 시점에 맞춘다.
+     */
+    data class TimedSegment(val startMs: Int, val endMs: Int, val charEnd: Int)
+
+    /** 파싱된 전사: 자막/피싱용 순수 텍스트 + (있으면) 타임스탬프 세그먼트. */
+    data class ParsedTranscript(val text: String, val segments: List<TimedSegment>?)
+
+    private val TIMED_LINE = Regex("""^\[(\d+)-(\d+)]\s*(.*)$""")
+
+    /**
+     * 전사 원문을 파싱한다.
+     * - 모든 줄이 `[startMs-endMs] 텍스트` 패턴이면 타임스탬프 모드(세그먼트 텍스트를 공백으로 이어 plainText 구성).
+     * - 한 줄이라도 패턴이 아니면 전체를 plain text로 취급(기존 시간 비례 fallback) — 마커 노출 방지.
+     */
+    fun parseTranscript(raw: String): ParsedTranscript {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return ParsedTranscript("", null)
+        val lines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val matches = lines.map { TIMED_LINE.matchEntire(it) }
+        if (lines.isEmpty() || matches.any { it == null }) {
+            return ParsedTranscript(trimmed, null)
+        }
+        val sb = StringBuilder()
+        val segments = ArrayList<TimedSegment>(matches.size)
+        for (m in matches) {
+            val (s, e, txt) = m!!.destructured
+            if (sb.isNotEmpty()) sb.append(' ')
+            sb.append(txt)
+            segments.add(TimedSegment(s.toInt(), e.toInt(), sb.length))
+        }
+        return ParsedTranscript(sb.toString(), segments)
+    }
+
+    /**
+     * 타임스탬프 세그먼트 기준으로 offsetMs 시점까지 공개할 글자 수.
+     * - 완료된 세그먼트는 전체 공개.
+     * - 진행 중 세그먼트는 (startMs..endMs) 내 시간 비례로 보간 → 발화 중에만 글자가 차오름.
+     * - 세그먼트 사이 침묵(이전 endMs ~ 다음 startMs)에는 글자가 멈춘다.
+     */
+    fun transcriptCharsTimed(segments: List<TimedSegment>, offsetMs: Int): Int {
+        if (segments.isEmpty()) return 0
+        var prevCharEnd = 0
+        for (seg in segments) {
+            when {
+                offsetMs >= seg.endMs -> prevCharEnd = seg.charEnd
+                offsetMs <= seg.startMs -> return prevCharEnd
+                else -> {
+                    val span = (seg.endMs - seg.startMs).coerceAtLeast(1)
+                    val ratio = (offsetMs - seg.startMs).toFloat() / span
+                    val segChars = (seg.charEnd - prevCharEnd).coerceAtLeast(0)
+                    return prevCharEnd + (segChars * ratio).toInt().coerceIn(0, segChars)
+                }
+            }
+        }
+        return prevCharEnd
+    }
+
     /** audio에서 endSample에 끝나는 length 윈도우. 모자라면 왼쪽 0 패딩. */
     fun windowEndingAt(audio: FloatArray, endSample: Int, length: Int): FloatArray {
         val out = FloatArray(length)

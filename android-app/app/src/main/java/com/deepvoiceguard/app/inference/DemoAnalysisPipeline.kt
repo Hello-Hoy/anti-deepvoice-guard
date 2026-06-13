@@ -105,7 +105,8 @@ class DemoAnalysisPipeline(
                     DemoFailureReason.TRANSCRIPT_MISSING,
                 )
             }
-            loaded
+            // 타임스탬프 마커가 있으면 순수 텍스트만 추출(자막/피싱용). 없으면 원문 그대로.
+            DemoTimelineMath.parseTranscript(loaded).text
         } else ""
 
         // 3. 피싱 키워드 탐지
@@ -187,11 +188,15 @@ class DemoAnalysisPipeline(
         val vadFrameMs = 512 * 1000 / sr
 
         // 3) 전사 (fail-closed)
-        val transcript = if (transcriptAssetPath != null) {
+        // 타임스탬프 마커(`[startMs-endMs] 텍스트`)가 있으면 세그먼트 기반으로 자막을 실제 발화
+        // 시점에 동기화한다. 없으면 segments=null → 기존 시간 비례 공개로 fallback.
+        val parsedTranscript = if (transcriptAssetPath != null) {
             val loaded = loadTextFromAssets(transcriptAssetPath)
             if (loaded.isBlank()) throw DemoAnalysisException("전사본을 읽을 수 없거나 비어 있습니다: $transcriptAssetPath", DemoFailureReason.TRANSCRIPT_MISSING)
-            loaded
-        } else ""
+            DemoTimelineMath.parseTranscript(loaded)
+        } else DemoTimelineMath.ParsedTranscript("", null)
+        val transcript = parsedTranscript.text
+        val transcriptSegments = parsedTranscript.segments
 
         // 최종 요약(결과 카드)용 전체 전사 분석.
         val fullPhishing = if (transcript.isNotBlank()) phishingDetector.analyze(transcript) else null
@@ -210,7 +215,11 @@ class DemoAnalysisPipeline(
             val vadActive = DemoTimelineMath.vadActiveAt(vadProbs, vadFrameMs, vadLookupMs, 0.5f)
             val stepIdx = DemoTimelineMath.stepHoldIndexAt(stepTimes, t)
             val agg = if (stepIdx >= 0) steps[stepIdx].second else null
-            val chars = DemoTimelineMath.transcriptCharsAt(transcript.length, t, durationMs)
+            val chars = if (transcriptSegments != null) {
+                DemoTimelineMath.transcriptCharsTimed(transcriptSegments, t)
+            } else {
+                DemoTimelineMath.transcriptCharsAt(transcript.length, t, durationMs)
+            }.coerceIn(0, transcript.length)
             val revealed = transcript.substring(0, chars)
             val phishing = if (revealed.isNotBlank()) phishingDetector.analyze(revealed) else null
 
